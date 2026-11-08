@@ -1,0 +1,116 @@
+# horizon-luckperms: permissions shared with LuckPerms on Paper/Velocity through the same database.
+# Keys follow LuckPerms' config.yml; only what a server needs is here.
+
+# The "server" context of this server. "global" adds none (permissions set without a server apply).
+server = "global"
+
+# "sql" polls the {prefix}messenger table every second, as LuckPerms' SQL messenger does.
+# "auto" picks it with MariaDB/MySQL storage; "none" turns it off.
+messaging-service = "auto"
+# A full reload from the database every N minutes; -1 never (the messenger keeps servers in step).
+sync-minutes = -1
+auto-push-updates = true
+push-log-entries = true
+broadcast-received-log-entries = true
+log-notify = true
+# Regexes; a log entry whose description matches one is not announced to players.
+log-notify-filtered-descriptions = []
+
+# "deny", "accumulate" or "replace": what adding a temporary node does when one exists.
+temporary-add-behaviour = "deny"
+# "stored", "parents-by-weight" or "all-parents-by-weight".
+primary-group-calculation = "parents-by-weight"
+# "depth-first-pre-order", "depth-first-post-order" or "breadth-first".
+inheritance-traversal-algorithm = "depth-first-pre-order"
+post-traversal-inheritance-sort = false
+
+include-global = true
+include-global-world = true
+apply-global-groups = true
+apply-global-world-groups = true
+apply-wildcards = true
+apply-regex = true
+apply-shorthand = true
+prevent-primary-group-removal = false
+# Look up user arguments that are no valid Minecraft name.
+allow-invalid-usernames = false
+
+disabled-contexts = []
+
+# The web editor (/lp editor, /lp applyedits). The editor's data (group and user names, UUIDs, nodes, tracks;
+# never IP addresses) is uploaded to bytebin and opened at web-editor-url.
+bytebin-url = "https://usercontent.luckperms.net/"
+web-editor-url = "https://luckperms.net/editor/"
+
+
+[storage]
+# "mariadb" or "mysql"; "memory" keeps everything in RAM (testing only, nothing is shared).
+method = "mariadb"
+address = "localhost:3306"
+database = "minecraft"
+username = "minecraft"
+# Fill in by hand. Never commit it.
+password = ""
+table-prefix = "luckperms_"
+maximum-pool-size = 4
+minimum-idle = 1
+connection-timeout-ms = 5000
+use-ssl = false
+
+[meta-formatting.prefix]
+format = ["highest"]
+duplicates = "first-only"
+start-spacer = ""
+middle-spacer = " "
+end-spacer = ""
+
+[meta-formatting.suffix]
+format = ["highest"]
+duplicates = "first-only"
+start-spacer = ""
+middle-spacer = " "
+end-spacer = ""
+
+# Group weight overrides: admin = 100
+[group-weight]
+
+# World context rewrites: world_nether = "world"
+[world-rewrite]
+
+# Contexts every player on this server gets (contexts.json "static-contexts").
+[static-contexts]
+
+# "LuckPerms commands are disabled" for players and/or the console.
+[disable-luckperms-commands]
+players = false
+console = false
+
+# Only the read-only commands (info, list, check, ...) work for players and/or the console.
+[commands-read-only-mode]
+players = false
+console = false
+
+[horizon]
+# Horizon has operator levels, not Bukkit's op flag. Players at this level or above are "op":
+# every permission they are not explicitly denied is true.
+op-level = 1
+enable-ops = true
+# Ops may use /lp without luckperms.* permissions.
+commands-allow-op = true
+# Every typed command is checked against minecraft.command.<name> (Paper's names for vanilla
+# commands) or the node given below. A node set false refuses the command, even for ops.
+command-permissions = true
+# A command whose node is true but whose operator level the player lacks is re-run from the console
+# as "execute as <player> at <player> run <command>" on the next tick. Its output goes to the server
+# log, not the player. A stopgap until Horizon can raise a command's level (see GAPS.md). Off by default.
+grant-via-execute = false
+no-permission-message = "§cI'm sorry, but you do not have permission to perform this command."
+unload-delay-seconds = 60
+
+# Mod commands and the node that guards them.
+[horizon.command-nodes]
+# tpa = "essentials.tpa"
+
+# The "world" context per dimension. Missing ones follow Paper: <level>, <level>_nether, <level>_the_end.
+[horizon.world-names]
+# "minecraft:overworld" = "world"

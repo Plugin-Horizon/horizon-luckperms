@@ -1,0 +1,11 @@
+horizon-luckperms
+Copyright (c) 2026 Detimes
+
+Derived from LuckPerms (https://github.com/LuckPerms/LuckPerms), MIT licence:
+
+  Copyright (c) lucko (Luck) <luck@lucko.me>
+  Copyright (c) contributors
+
+The command system (`core/src/command`), the message texts (`core/src/lang.rs`, generated from LuckPerms'
+`luckperms_en.properties`), the command specs (`core/src/command/specs.rs`, from `CommandSpec`), the data formats and the
+resolution rules follow LuckPerms. Not affiliated with LuckPerms or its authors.
