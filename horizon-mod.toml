@@ -2,7 +2,7 @@ id = "luckperms"
 name = "LuckPerms"
 version = "0.1.0"
 description = "Unofficial LuckPerms port: permissions, groups and prefixes from LuckPerms' own MariaDB tables and SQL messaging."
-authors = ["CoreSMP"]
+authors = ["Plugin-Horizon contributors"]
 api = "0.2"
 capabilities = ["registries"]
 
