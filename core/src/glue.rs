@@ -3,15 +3,27 @@
 
 use crate::command::ROOTS;
 use crate::config::{Config, DEFAULT_TOML, FILE_NAME};
+use crate::original::{self, Reads, CONFIG_YML, CONTEXTS_JSON};
 use crate::runtime::{self, CommandSender, OnlinePlayer, Outgoing};
 use crate::storage::{MemoryStorage, Storage};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::SystemTime;
 
+/// The LuckPerms folder of the Paper server, as the engine's working directory (the server folder) holds it.
+pub const ORIGINAL_DIR: &str = "plugins/LuckPerms";
+
+/// Where the settings come from: the original files (`plugins/LuckPerms/config.yml` and `contexts.json`),
+/// or the port's own TOML in `config/` when the original is missing.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum Source {
+    Original { dir: PathBuf },
+    Toml { path: PathBuf },
+}
+
 struct Watch {
-    path: PathBuf,
-    modified: Option<SystemTime>,
+    source: Source,
+    stamps: Vec<Option<SystemTime>>,
 }
 
 fn watch() -> &'static Mutex<Option<Watch>> {
@@ -27,27 +39,68 @@ fn modified(p: &Path) -> Option<SystemTime> {
     std::fs::metadata(p).and_then(|m| m.modified()).ok()
 }
 
-/// Reads (or writes the default) `config/luckperms.toml` and starts the service. A missing
-/// file is written with the defaults and an empty password, and the service starts only once
-/// it is filled in (a MariaDB without password is refused before connecting).
-pub fn start(config_dir: &Path, level_name: &str) {
-    let path = config_dir.join(FILE_NAME);
-    if !path.exists() {
-        if let Err(e) = std::fs::write(&path, DEFAULT_TOML) {
-            log(&format!("could not write {}: {e}", path.display()));
-        } else {
-            log(&format!("wrote {}; fill in [storage] and restart", path.display()));
+fn files(src: &Source) -> Vec<PathBuf> {
+    match src {
+        Source::Original { dir } => vec![dir.join(CONFIG_YML), dir.join(CONTEXTS_JSON)],
+        Source::Toml { path } => vec![path.clone()],
+    }
+}
+
+fn stamps(src: &Source) -> Vec<Option<SystemTime>> {
+    files(src).iter().map(|p| modified(p)).collect()
+}
+
+/// Reads the settings from `src`. Only the original files' own keys are taken from them; a failure says
+/// why the service does not start (no values).
+fn load(src: &Source) -> Result<Config, String> {
+    match src {
+        Source::Toml { path } => {
+            let text = std::fs::read_to_string(path).unwrap_or_default();
+            Config::parse(&text)
+        }
+        Source::Original { dir } => {
+            let text = std::fs::read_to_string(dir.join(CONFIG_YML)).map_err(|e| format!("{CONFIG_YML} cannot be read: {}", e.kind()))?;
+            let mut reads = Reads::default();
+            let mut cfg = original::config_from_yaml(&text, &mut reads)?;
+            let ctx = dir.join(CONTEXTS_JSON);
+            if ctx.exists() {
+                let text = std::fs::read_to_string(&ctx).map_err(|e| format!("{CONTEXTS_JSON} cannot be read: {}", e.kind()))?;
+                let (statics, defaults) = original::contexts_from_json(&text, &mut reads)?;
+                cfg.static_contexts = statics;
+                cfg.default_contexts = defaults;
+            }
+            Ok(cfg)
         }
     }
-    let text = std::fs::read_to_string(&path).unwrap_or_default();
-    let cfg = match Config::parse(&text) {
+}
+
+/// Starts the service. The original `plugins/LuckPerms/config.yml` is used when it exists (read unchanged,
+/// nothing is written there). Otherwise `config/luckperms.toml` is read, and written with the defaults and an
+/// empty password when missing; the service then starts only once the password is filled in.
+pub fn start(config_dir: &Path, level_name: &str) {
+    let src = if Path::new(ORIGINAL_DIR).join(CONFIG_YML).exists() {
+        Source::Original { dir: PathBuf::from(ORIGINAL_DIR) }
+    } else {
+        let path = config_dir.join(FILE_NAME);
+        if !path.exists() {
+            if let Err(e) = std::fs::write(&path, DEFAULT_TOML) {
+                log(&format!("could not write {}: {e}", path.display()));
+            } else {
+                log(&format!("wrote {}; fill in [storage] and restart", path.display()));
+            }
+        }
+        Source::Toml { path }
+    };
+    let cfg = match load(&src) {
         Ok(c) => c,
         Err(e) => {
-            log(&format!("{} is not valid ({e}); not started", path.display()));
+            log(&format!("{e}; not started"));
             return;
         }
     };
-    *watch().lock().unwrap_or_else(|e| e.into_inner()) = Some(Watch { modified: modified(&path), path });
+    for n in &cfg.unsupported {
+        log(&format!("not supported, ignored: {n}"));
+    }
     let storage: Box<dyn Storage> = match open_storage(&cfg) {
         Ok(s) => s,
         Err(e) => {
@@ -55,6 +108,7 @@ pub fn start(config_dir: &Path, level_name: &str) {
             return;
         }
     };
+    *watch().lock().unwrap_or_else(|e| e.into_inner()) = Some(Watch { stamps: stamps(&src), source: src });
     if let Err(e) = runtime::start(cfg, storage, level_name) {
         log(&format!("not started: {e}"));
     }
@@ -87,24 +141,29 @@ pub fn stop() {
     runtime::stop();
 }
 
-/// Once a second at most: a saved config is reloaded (storage changes need a restart).
+/// Once a second at most: a saved config is reloaded (storage changes need a restart). Off with `watch-files: false`.
 pub fn check_config() {
-    let mut w = watch().lock().unwrap_or_else(|e| e.into_inner());
-    let Some(w) = w.as_mut() else { return };
-    let m = modified(&w.path);
-    if m == w.modified {
+    if !runtime::get().is_none_or(|rt| rt.config().watch_files) {
         return;
     }
-    w.modified = m;
-    let Ok(text) = std::fs::read_to_string(&w.path) else { return };
-    match Config::parse(&text) {
+    let mut w = watch().lock().unwrap_or_else(|e| e.into_inner());
+    let Some(w) = w.as_mut() else { return };
+    let now = stamps(&w.source);
+    if now == w.stamps {
+        return;
+    }
+    w.stamps = now;
+    match load(&w.source) {
         Ok(c) => {
+            for n in &c.unsupported {
+                log(&format!("not supported, ignored: {n}"));
+            }
             if let Some(rt) = runtime::get() {
                 rt.reload_config(c);
                 log("config reloaded");
             }
         }
-        Err(e) => log(&format!("config not reloaded, it is not valid: {e}")),
+        Err(e) => log(&format!("config not reloaded: {e}")),
     }
 }
 
@@ -175,6 +234,16 @@ fn move_granted(names: &mut Vec<String>, hidden: &[String], decide: impl Fn(&str
 pub fn login(player: u128, name: &str) {
     if let Some(rt) = runtime::get() {
         rt.on_login(player, name);
+    }
+}
+
+/// `native_player_pre_login`: the player's data loads before they are placed. `done` gets the answer on the
+/// worker thread (Ok lets them on, Err refuses them with the reason). False when no service runs: nothing is
+/// queued, and the login goes on as before.
+pub fn pre_login(player: u128, name: &str, done: impl FnOnce(Result<(), String>) + Send + 'static) -> bool {
+    match runtime::get() {
+        Some(rt) => rt.pre_login(player, name, Box::new(done)),
+        None => false,
     }
 }
 
@@ -324,3 +393,39 @@ mod tests {
         assert_eq!(gate(0xdead, "x", "gamemode creative", 0), Gate::Pass);
     }
 }
+
+#[cfg(test)]
+mod source_tests {
+    use super::*;
+
+    #[test]
+    fn original_files_are_read_in_place() {
+        let dir = std::env::temp_dir().join(format!("horizon-luckperms-glue-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        // Invented values, the structure of the original.
+        std::fs::write(dir.join(CONFIG_YML), "server: lobby\nstorage-method: mariadb\nsync-minutes: 7\n").unwrap();
+        std::fs::write(dir.join(CONTEXTS_JSON), r#"{"static-contexts": {"region": "north"}, "default-contexts": {}}"#).unwrap();
+        let cfg = load(&Source::Original { dir: dir.clone() }).unwrap();
+        assert_eq!(cfg.server, "lobby");
+        assert_eq!(cfg.sync_minutes, 7);
+        assert_eq!(cfg.static_contexts.get("region").map(String::as_str), Some("north"));
+        // Without contexts.json the static contexts are empty.
+        std::fs::remove_file(dir.join(CONTEXTS_JSON)).unwrap();
+        assert!(load(&Source::Original { dir: dir.clone() }).unwrap().static_contexts.is_empty());
+        // A missing config.yml is an error, not a silent default.
+        std::fs::remove_file(dir.join(CONFIG_YML)).unwrap();
+        assert!(load(&Source::Original { dir: dir.clone() }).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_toml_fallback_reads_its_own_file() {
+        let path = std::env::temp_dir().join(format!("horizon-luckperms-toml-{}.toml", std::process::id()));
+        std::fs::write(&path, "server = \"Lab\"\n").unwrap();
+        let cfg = load(&Source::Toml { path: path.clone() }).unwrap();
+        assert_eq!(cfg.server, "lab");
+        let _ = std::fs::remove_file(&path);
+    }
+}
+

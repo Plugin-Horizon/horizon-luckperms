@@ -13,7 +13,7 @@ use crate::context::{self, ContextSet};
 use crate::messaging::{Message, SeenIds, UpdateBuffer};
 use crate::model::{Model, User};
 use crate::storage::Storage;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex, OnceLock, RwLock};
@@ -59,8 +59,16 @@ impl CommandSender {
     }
 }
 
+/// Refused logins get this reason; the detail goes to the log.
+pub const PRE_LOGIN_REFUSAL: &str = "Your permissions could not be loaded. Please try again in a moment.";
+
+/// The answer to a pre-login load: Ok lets the player on, Err refuses them with the reason.
+pub type PreLoginDone = Box<dyn FnOnce(Result<(), String>) + Send>;
+
 enum Job {
     Login { uuid: u128, name: String },
+    /// Loads the player's data before they are placed; `done` gets the answer on the worker thread.
+    PreLogin { uuid: u128, name: String, done: PreLoginDone },
     Command { sender: CommandSender, args: Vec<String> },
     SyncAll { push: bool },
     ReloadConfig(Config),
@@ -220,6 +228,16 @@ impl Runtime {
         self.send(Job::Login { uuid, name: name.to_owned() });
     }
 
+    /// `native_player_pre_login`: the worker loads the player's data, then `done` gets the answer. False when
+    /// no worker runs (nothing is queued and the player is let in as before).
+    pub fn pre_login(&self, uuid: u128, name: &str, done: PreLoginDone) -> bool {
+        let guard = self.jobs.lock().unwrap_or_else(|e| e.into_inner());
+        match guard.as_ref() {
+            Some(tx) => tx.send(Job::PreLogin { uuid, name: name.to_owned(), done }).is_ok(),
+            None => false,
+        }
+    }
+
     /// A player left: they stay loaded for `unload-delay-seconds`.
     pub fn on_logout(&self, uuid: u128) {
         if let Ok(mut o) = self.online.write() {
@@ -330,13 +348,19 @@ impl Runtime {
     /// The permission check for an online player, in their current contexts; Undefined for a
     /// player not on this server.
     pub fn check(&self, uuid: u128, permission: &str) -> Tristate {
-        match self.online_player(uuid) {
+        let set = match self.online_player(uuid) {
             Some(p) => {
                 let ctx = self.contexts_of(&p);
                 self.resolved(uuid, &ctx, self.is_op(p.op_level)).check(permission).result
             }
             None => Tristate::Undefined,
+        };
+        // Bukkit's plugin.yml `default: true`: a node a plugin registered as default-true, which the
+        // permissions leave undefined, is true (`apply-bukkit-default-permissions`).
+        if set == Tristate::Undefined && self.config().apply_bukkit_default_permissions && crate::api::is_default_true(permission) {
+            return Tristate::True;
         }
+        set
     }
 
     /// The model's change counter: it moves on every change of a group, user or track.
@@ -424,6 +448,8 @@ struct Worker {
     last_housekeep: Instant,
     last_audit: Instant,
     last_sync: Instant,
+    /// Players whose data a pre-login load already brought in: their login does not load it again.
+    preloaded: HashSet<u128>,
 }
 
 impl Worker {
@@ -439,6 +465,7 @@ impl Worker {
             last_housekeep: now,
             last_audit: now,
             last_sync: now,
+            preloaded: HashSet::new(),
         }
     }
 
@@ -460,7 +487,24 @@ impl Worker {
 
     fn handle(&mut self, job: Job) {
         match job {
-            Job::Login { uuid, name } => self.load_user(uuid, Some(&name)),
+            Job::Login { uuid, name } => {
+                // Already loaded by the pre-login answer (`native_player_pre_login`), unless that never came.
+                if !self.preloaded.remove(&uuid) {
+                    if let Err(e) = self.load_user(uuid, Some(&name)) {
+                        log(&e);
+                    }
+                }
+            }
+            Job::PreLogin { uuid, name, done } => match self.load_user(uuid, Some(&name)) {
+                Ok(()) => {
+                    self.preloaded.insert(uuid);
+                    done(Ok(()));
+                }
+                Err(e) => {
+                    log(&e);
+                    done(Err(PRE_LOGIN_REFUSAL.to_owned()));
+                }
+            },
             Job::Command { sender, args } => {
                 let out = command::execute(&self.rt, self.storage.as_mut(), &sender, &args);
                 self.finish(&sender, out);
@@ -482,36 +526,38 @@ impl Worker {
         }
     }
 
-    fn load_user(&mut self, uuid: u128, name: Option<&str>) {
+    /// Loads a player's nodes into the model. A failed load is returned (the caller logs it or refuses the
+    /// login); a failed name save is only logged, as LuckPerms does.
+    fn load_user(&mut self, uuid: u128, name: Option<&str>) -> Result<(), String> {
         if let Some(name) = name {
             if let Err(e) = self.storage.save_player_data(uuid, name) {
                 log(&format!("could not save the name of {}: {e}", crate::uuid::format(uuid)));
             }
         }
-        match self.storage.load_user(uuid) {
-            Ok((nodes, row)) => {
-                let mut u = User::new(uuid);
-                u.data.nodes = nodes.clone();
-                u.saved = nodes;
-                if let Some(r) = row {
-                    u.primary_group = if r.primary_group.is_empty() { crate::model::DEFAULT_GROUP.into() } else { r.primary_group.to_lowercase() };
-                    if r.username != "null" {
-                        u.username = Some(r.username);
-                    }
-                }
-                if let Some(n) = name {
-                    u.username = Some(n.to_owned());
-                }
-                u.give_default_if_needed();
-                if self.rt.config().primary_group_calculation.eq_ignore_ascii_case("stored") {
-                    u.repair_stored_primary_group();
-                }
-                let mut m = self.rt.model.write().unwrap_or_else(|e| e.into_inner());
-                m.users.insert(uuid, u);
-                m.touch();
+        let (nodes, row) = self
+            .storage
+            .load_user(uuid)
+            .map_err(|e| format!("could not load {}: {e}", crate::uuid::format(uuid)))?;
+        let mut u = User::new(uuid);
+        u.data.nodes = nodes.clone();
+        u.saved = nodes;
+        if let Some(r) = row {
+            u.primary_group = if r.primary_group.is_empty() { crate::model::DEFAULT_GROUP.into() } else { r.primary_group.to_lowercase() };
+            if r.username != "null" {
+                u.username = Some(r.username);
             }
-            Err(e) => log(&format!("could not load {}: {e}", crate::uuid::format(uuid))),
         }
+        if let Some(n) = name {
+            u.username = Some(n.to_owned());
+        }
+        u.give_default_if_needed();
+        if self.rt.config().primary_group_calculation.eq_ignore_ascii_case("stored") {
+            u.repair_stored_primary_group();
+        }
+        let mut m = self.rt.model.write().unwrap_or_else(|e| e.into_inner());
+        m.users.insert(uuid, u);
+        m.touch();
+        Ok(())
     }
 
     fn sync_all(&mut self) {
@@ -532,7 +578,9 @@ impl Worker {
         }
         let users: Vec<u128> = self.rt.model.read().map(|m| m.users.keys().copied().collect()).unwrap_or_default();
         for u in users {
-            self.load_user(u, None);
+            if let Err(e) = self.load_user(u, None) {
+                log(&e);
+            }
         }
     }
 
@@ -659,7 +707,9 @@ impl Worker {
             Message::UserUpdate { user, .. } => {
                 let loaded = self.rt.model.read().map(|m| m.users.contains_key(&user)).unwrap_or(false);
                 if loaded {
-                    self.load_user(user, None);
+                    if let Err(e) = self.load_user(user, None) {
+                        log(&e);
+                    }
                 }
             }
             Message::Log { action, .. } => {
@@ -766,6 +816,96 @@ mod tests {
         let out = rt.drain_outbox();
         assert!(out.iter().any(|o| o.to == Recipient::Console));
         assert_eq!(storage.inner.lock().unwrap().user_nodes.get(&alice).map(|n| n.len()), Some(2));
+        // The API other mods use (api.rs): the answers match what the runtime resolved.
+        assert_eq!(crate::api::permission(alice, "essentials.fly"), Some(false));
+        assert_eq!(crate::api::permission(alice, "essentials.speed"), None);
+        assert_eq!(crate::api::primary_group(alice).as_deref(), Some("default"));
+        assert_eq!(crate::api::weight(alice), Some(0), "the default group has no weight node");
+        assert_eq!(crate::api::weight(0xdead), None, "not on this server");
         stop();
     }
 }
+
+#[cfg(test)]
+mod pre_login_tests {
+    use super::*;
+    use crate::storage::MemoryStorage;
+    use std::sync::atomic::Ordering;
+
+    fn worker(storage: MemoryStorage) -> (Arc<Runtime>, Worker) {
+        let mut cfg = Config::default();
+        cfg.storage.method = "memory".into();
+        cfg.messaging_service = "none".into();
+        let rt = Arc::new(detached(cfg, Model::default()));
+        let w = Worker::new(rt.clone(), Box::new(storage), -1);
+        (rt, w)
+    }
+
+    #[test]
+    fn pre_login_loads_before_placement_and_the_login_does_not_load_again() {
+        let storage = MemoryStorage::default();
+        let (rt, mut w) = worker(storage.clone());
+        let (tx, rx) = mpsc::channel();
+        let alice = 0xa11ce;
+        w.handle(Job::PreLogin { uuid: alice, name: "Alice".into(), done: Box::new(move |r| { let _ = tx.send(r); }) });
+        assert_eq!(rx.recv().unwrap(), Ok(()));
+        assert!(rt.model.read().unwrap().users.contains_key(&alice), "loaded before the player is placed");
+        assert!(w.preloaded.contains(&alice));
+        // The login that follows does not take the load again.
+        w.handle(Job::Login { uuid: alice, name: "Alice".into() });
+        assert!(!w.preloaded.contains(&alice));
+    }
+
+    #[test]
+    fn a_failed_load_refuses_the_login_with_the_generic_reason() {
+        let storage = MemoryStorage::default();
+        storage.fail_loads.store(true, Ordering::Relaxed);
+        let (rt, mut w) = worker(storage);
+        let (tx, rx) = mpsc::channel();
+        let bob = 0xb0b;
+        w.handle(Job::PreLogin { uuid: bob, name: "Bob".into(), done: Box::new(move |r| { let _ = tx.send(r); }) });
+        assert_eq!(rx.recv().unwrap(), Err(PRE_LOGIN_REFUSAL.to_owned()));
+        assert!(!rt.model.read().unwrap().users.contains_key(&bob));
+        assert!(!w.preloaded.contains(&bob));
+    }
+
+    #[test]
+    fn a_login_without_pre_login_still_loads() {
+        let storage = MemoryStorage::default();
+        let (rt, mut w) = worker(storage);
+        let owner = 0x0ff;
+        w.handle(Job::Login { uuid: owner, name: "Owner".into() });
+        assert!(rt.model.read().unwrap().users.contains_key(&owner));
+    }
+
+    #[test]
+    fn no_worker_means_no_pre_login() {
+        let rt = detached(Config::default(), Model::default());
+        assert!(!rt.pre_login(1, "x", Box::new(|_| {})));
+    }
+
+    #[test]
+    fn default_true_nodes_are_true_only_while_undefined_and_enabled() {
+        let (rt, _) = worker(MemoryStorage::default());
+        let p = 0xd3f;
+        rt.update_players(vec![OnlinePlayer { uuid: p, name: "Dee".into(), op_level: 0, dimension: "minecraft:overworld".into(), game_mode: 0 }]);
+        crate::api::register_default_true("Test.Default.Node");
+        assert!(crate::api::is_default_true("test.default.node"));
+        assert_eq!(rt.check(p, "test.default.node"), Tristate::True);
+        // An explicit false still wins.
+        {
+            let mut m = rt.model.write().unwrap();
+            let node = crate::node::Node::permanent("test.default.node", false, crate::context::ContextSet::new());
+            m.users.entry(p).or_insert_with(|| crate::model::User::new(p)).data.set(node);
+            m.touch();
+        }
+        assert_eq!(rt.check(p, "test.default.node"), Tristate::False);
+        // Switched off in the config: nothing is registered for the player.
+        let mut cfg = (*rt.config()).clone();
+        cfg.apply_bukkit_default_permissions = false;
+        *rt.cfg.write().unwrap() = Arc::new(cfg);
+        assert_eq!(rt.check(p, "test.default.node"), Tristate::False);
+        assert_eq!(rt.check(p, "test.other.node"), Tristate::Undefined);
+    }
+}
+

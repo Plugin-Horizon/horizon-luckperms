@@ -45,7 +45,7 @@ web-editor-url = "https://luckperms.net/editor/"
 
 [storage]
 # "mariadb" or "mysql"; "memory" keeps everything in RAM (testing only, nothing is shared).
-method = "mariadb"
+method = "memory"
 address = "localhost:3306"
 database = "minecraft"
 username = "minecraft"

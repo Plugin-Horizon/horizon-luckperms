@@ -53,6 +53,22 @@ pub struct Config {
     pub commands_read_only_mode: PlayersConsole,
     /// `log-notify-filtered-descriptions`: regexes; a log entry whose description matches one is not announced.
     pub log_notify_filtered_descriptions: Vec<String>,
+    /// `contexts.json`'s `default-contexts` (read; LuckPerms applies them when no context is known,
+    /// the port does not yet: see GAPS.md).
+    pub default_contexts: BTreeMap<String, String>,
+    /// `apply-bukkit-default-permissions`: nodes registered as Bukkit default-true (`api::register_default_true`)
+    /// are true for everyone their permissions leave undefined.
+    pub apply_bukkit_default_permissions: bool,
+    /// `watch-files`: a saved config is reloaded within a second (on by default).
+    pub watch_files: bool,
+    /// The non-SQL messenger the original file would use (`redis`, `nats`, `rabbitmq`): the port does not
+    /// speak those, so messaging stays off. Set by the original-file reader only.
+    #[serde(skip)]
+    pub messenger_refused: Option<String>,
+    /// Settings of the original file this port reads but does not act on, as key paths with the value
+    /// (no values of secrets). Logged once at start. Set by the original-file reader only.
+    #[serde(skip)]
+    pub unsupported: Vec<String>,
     /// `bytebin-url`: where the web editor's data is uploaded to and downloaded from.
     pub bytebin_url: String,
     /// `web-editor-url`: the editor's address; the bytebin key is appended.
@@ -84,6 +100,13 @@ pub struct Storage {
     pub connection_timeout_ms: u64,
     /// TLS to the database (rustls).
     pub use_ssl: bool,
+    /// `pool-settings.keepalive-time` in ms, 0 off: the TCP keepalive of each connection.
+    pub keepalive_time_ms: u64,
+    /// `pool-settings.maximum-lifetime` in ms. Read but not applied: the MySQL client's pool has no lifetime.
+    pub maximum_lifetime_ms: u64,
+    /// `pool-settings.properties` (`useUnicode`, `characterEncoding`). Read but not applied: the port always
+    /// connects as utf8mb4, a superset of the original utf8.
+    pub pool_properties: BTreeMap<String, String>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -172,6 +195,9 @@ impl Default for Storage {
             minimum_idle: 1,
             connection_timeout_ms: 5000,
             use_ssl: false,
+            keepalive_time_ms: 0,
+            maximum_lifetime_ms: 0,
+            pool_properties: BTreeMap::new(),
         }
     }
 }
@@ -208,6 +234,11 @@ impl Default for Config {
             disable_luckperms_commands: PlayersConsole::default(),
             commands_read_only_mode: PlayersConsole::default(),
             log_notify_filtered_descriptions: Vec::new(),
+            default_contexts: BTreeMap::new(),
+            apply_bukkit_default_permissions: true,
+            watch_files: true,
+            messenger_refused: None,
+            unsupported: Vec::new(),
             bytebin_url: "https://usercontent.luckperms.net/".into(),
             web_editor_url: "https://luckperms.net/editor/".into(),
             horizon: Horizon::default(),
@@ -231,6 +262,9 @@ impl Config {
 
     /// Whether the SQL messenger runs (`messaging-service: auto` picks it with SQL storage).
     pub fn sql_messaging(&self) -> bool {
+        if self.messenger_refused.is_some() {
+            return false;
+        }
         match self.messaging_service.to_lowercase().as_str() {
             "sql" => true,
             "auto" => matches!(self.storage.method.to_lowercase().as_str(), "mariadb" | "mysql"),
@@ -294,7 +328,11 @@ mod tests {
         let c = Config::parse(DEFAULT_TOML).expect("example config parses");
         assert_eq!(c.server, "global");
         assert_eq!(c.storage.table_prefix, "luckperms_");
-        assert!(c.sql_messaging());
+        // The shipped example keeps everything in memory, so a fresh install reaches no database;
+        // SQL messaging only applies once a server switches the storage to MariaDB/MySQL.
+        assert!(!c.sql_messaging());
+        let sql = DEFAULT_TOML.replace("method = \"memory\"", "method = \"mariadb\"");
+        assert!(Config::parse(&sql).expect("mariadb variant parses").sql_messaging());
         assert_eq!(c.temporary_add_behaviour, TempMerge::Deny);
         assert_eq!(c.meta_formatting.prefix.format, vec!["highest".to_string()]);
     }

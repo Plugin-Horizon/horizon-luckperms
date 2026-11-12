@@ -1,17 +1,23 @@
 # horizon-luckperms
 
-> **Unofficial Rust port of LuckPerms for the Horizon server (https://github.com/horizon-rust/horizon). Not affiliated with or endorsed by the LuckPerms authors.**
+> **Unofficial Rust port of LuckPerms for the Horizon server (https://github.com/arismoko/horizon). Not affiliated with or endorsed by the LuckPerms authors.**
 
-LuckPerms-compatible permissions for [Horizon](https://github.com/horizon-rust/horizon) servers, as a native mod.
+LuckPerms-compatible permissions for [Horizon](https://github.com/arismoko/horizon) servers, as a native mod.
 It reads and writes **LuckPerms' own MariaDB/MySQL tables** and speaks its **SQL messaging service**, so a Horizon
 server shares ranks, permissions, prefixes and meta with Paper servers and a Velocity proxy that run LuckPerms
 on the same database.
 
 Derived from LuckPerms (https://github.com/LuckPerms/LuckPerms, MIT). Not affiliated with LuckPerms or its authors.
 
-**State: blind port.** Written against Horizon `a589a3dd9` without an engine build or a running server; the core
-crate is unit-tested on its own. See [STATUS.md](STATUS.md) for what is done and [GAPS.md](GAPS.md) for what
-Horizon still needs.
+> **Built for and working only with [arismoko/horizon](https://github.com/arismoko/horizon)** (the Horizon fork that carries the mod API). [horizon-rust/horizon](https://github.com/horizon-rust/horizon) is experimental for mods and not supported: the earlier version for its native hooks / horizon-mixins is frozen on the `horizon-plain` branch (work stopped on 2026-11-12).
+
+## Which Horizon
+
+This is a native trait mod: `horizon-mod.toml`, a `Cargo.toml` that depends on `horizon-mod-api`, `src/lib.rs` with the hooks, and the plugin logic in the `core/` crate (plain Rust, no engine needed for its tests).
+
+- Pin: `[native] horizon = "54090ee36c4e2c7b43b66db864220c577b94b7e0"` in `horizon-mod.toml` (game `26.3`). That is a development build of arismoko/horizon `main` plus mod API additions that are not all merged upstream yet, so a stock `main` may lack some host methods this mod calls until they land.
+- It compiled and loaded on that build and was smoke-tested there; it has not seen a long run with real players. Treat it as experimental.
+- Feature descriptions below were written for the earlier horizon-rust version; where they name engine calls (`native_*`) or old file paths, read them as descriptions only. The Known gaps list is current.
 
 ## What it does
 
@@ -40,7 +46,7 @@ as op: every permission not explicitly set false is true for them (LuckPerms `en
 `/lp` without `luckperms.*` nodes (`commands-allow-op`).
 
 Granting a command above a player's level (a non-op with `minecraft.command.gamemode`) needs a Horizon hook that
-does not exist yet (GAPS.md). Until then `grant-via-execute = true` re-runs such a command from the console as
+does not exist yet (the Known gaps section). Until then `grant-via-execute = true` re-runs such a command from the console as
 `execute as <player> at <player> run <command>`; its answer then goes to the server log. Off by default.
 
 ## Config
@@ -49,15 +55,6 @@ does not exist yet (GAPS.md). Until then `grant-via-execute = true` re-runs such
 Keys follow LuckPerms' `config.yml`; see `core/luckperms.example.toml`. Saving the file reloads it within a
 second; storage settings need a restart. To share data with existing LuckPerms servers use the same database,
 `table-prefix` and `messaging-service`, and give this server the `server` name its contexts should use.
-
-## Build
-
-A native mod bundle (`horizon-mixin.toml`): the `core/` crate plus HEAD injections into Horizon's hook points
-(helpers in `glue/`). Build it with the Horizon launcher (`horizon-launcher native-build <this folder> ...
---trust-native-code`) or as the launcher does: `horizon-mixins apply` on an exported Horizon at the pinned
-revision, then build `horizon-client`.
-
-The core crate alone: `cd core && cargo test --no-default-features` (no MariaDB driver) or `cargo test`.
 
 ## Web editor
 
@@ -76,7 +73,24 @@ that they are not available on Horizon.
 
 `verbose`, `tree`, `bulkupdate`, `import`/`export`, translations,
 storage types other than MariaDB/MySQL, messaging other than SQL, Bukkit child and default permissions. Details in
-[STATUS.md](STATUS.md).
+the Known gaps section.
+
+## Build
+
+Build it as a native trait mod with arismoko's launcher (see the "native mods" how-to in the arismoko/horizon docs):
+
+```sh
+horizon-launcher native-build <path to this folder> --server-output <dir> --version <tag> --trust-native-code
+```
+
+`--trust-native-code` is your consent to compile and run this code inside the server. The logic crate tests run without the engine: `(cd core && cargo test)`.
+
+## Known gaps
+
+What does not work yet on arismoko/horizon (each is marked `TODO(arismoko-api: ...)` in `src/lib.rs`):
+
+- A granted vanilla command (`minecraft.command.<name>`) is lifted to run for a non-operator, but the command tree of a non-operator still hides that root.
+- A failed load kicks players after 5 seconds; the kick path was not exercised with a real database.
 
 ## Licence and origin
 
@@ -84,7 +98,3 @@ MIT, see `LICENSE` and `NOTICE`. Derived from LuckPerms (https://github.com/Luck
 (Luck) and contributors): its source was read and ported 1:1 for the command system, the schema, the message formats and
 the resolution rules; its notice is kept in `LICENSE` and `NOTICE`. The message texts and the command specs are generated
 from LuckPerms' own resource file and `CommandSpec`; the Rust around them is new.
-
-## Contributing
-
-Pull requests and improvements are always welcome! Open an issue or a PR -- direct pushes to main are disabled, every change goes through review.

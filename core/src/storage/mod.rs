@@ -147,6 +147,9 @@ pub trait Storage: Send {
 #[derive(Clone, Default)]
 pub struct MemoryStorage {
     pub inner: std::sync::Arc<std::sync::Mutex<MemoryData>>,
+    /// Tests: makes every user load fail (a database that is down).
+    #[cfg(test)]
+    pub fail_loads: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
 #[derive(Default, Debug)]
@@ -188,6 +191,10 @@ impl Storage for MemoryStorage {
         Ok(())
     }
     fn load_user(&mut self, uuid: u128) -> Result<(Vec<Node>, Option<PlayerRow>)> {
+        #[cfg(test)]
+        if self.fail_loads.load(std::sync::atomic::Ordering::Relaxed) {
+            return Err("test: the database is down".into());
+        }
         Ok(self.with(|d| (d.user_nodes.get(&uuid).cloned().unwrap_or_default(), d.players.get(&uuid).cloned())))
     }
     fn save_user(&mut self, user: &User) -> Result<()> {

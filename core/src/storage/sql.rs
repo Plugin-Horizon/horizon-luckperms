@@ -41,6 +41,8 @@ impl SqlStorage {
             .pass(Some(cfg.password.clone()))
             .db_name(Some(cfg.database.clone()))
             .tcp_connect_timeout(Some(Duration::from_millis(cfg.connection_timeout_ms)))
+            // `pool-settings.keepalive-time` (ms; 0 off): the socket's keepalive.
+            .tcp_keepalive_time_ms((cfg.keepalive_time_ms > 0).then(|| cfg.keepalive_time_ms.min(u32::MAX as u64) as u32))
             .pool_opts(PoolOpts::default().with_constraints(constraints));
         if cfg.use_ssl {
             opts = opts.ssl_opts(Some(SslOpts::default()));
