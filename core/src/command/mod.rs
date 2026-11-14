@@ -464,6 +464,10 @@ fn run(c: &mut Ctx<'_>, mut a: Vec<String>) {
     let Some(main) = usable else {
         let shown: Vec<(&str, String)> =
             MAINS.iter().zip(authorized.iter()).filter(|(_, ok)| **ok).map(|(m, _)| (m.name, usage_of(m))).collect();
+        if shown.is_empty() {
+            c.no_permission_for_subcommands();
+            return;
+        }
         c.command_usage(&shown);
         return;
     };
