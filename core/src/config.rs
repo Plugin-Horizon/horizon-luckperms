@@ -328,7 +328,11 @@ mod tests {
         let c = Config::parse(DEFAULT_TOML).expect("example config parses");
         assert_eq!(c.server, "global");
         assert_eq!(c.storage.table_prefix, "luckperms_");
-        assert!(c.sql_messaging());
+        // The shipped example keeps everything in memory, so a fresh install reaches no database;
+        // SQL messaging only applies once a server switches the storage to MariaDB/MySQL.
+        assert!(!c.sql_messaging());
+        let sql = DEFAULT_TOML.replace("method = \"memory\"", "method = \"mariadb\"");
+        assert!(Config::parse(&sql).expect("mariadb variant parses").sql_messaging());
         assert_eq!(c.temporary_add_behaviour, TempMerge::Deny);
         assert_eq!(c.meta_formatting.prefix.format, vec!["highest".to_string()]);
     }

@@ -70,9 +70,9 @@ fn groups_permissions_and_inheritance() {
 fn players_need_permission() {
     let (rt, mut st) = setup();
     let alice = CommandSender { uuid: ALICE, name: "Alice".into(), console: false };
-    // A sender with no command permission gets the command list (here: just the banner), as in LuckPerms.
+    // A sender who may use no sub command is told so, as in LuckPerms (NO_PERMISSION_FOR_SUBCOMMANDS).
     let out = run(&rt, &mut st, &alice, "creategroup x");
-    assert_eq!(out, vec!["[LP] Running LuckPerms v5.5.0."], "{out:?}");
+    assert_eq!(out, vec!["[LP] You do not have permission to use any sub commands."], "{out:?}");
     // An op may (commands-allow-op).
     let bob = CommandSender { uuid: BOB, name: "Bob".into(), console: false };
     let out = run(&rt, &mut st, &bob, "creategroup x");
