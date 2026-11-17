@@ -2,7 +2,7 @@
 //! the kind (`group.admin`, `prefix.100.&c[Admin] `, `meta.color.red`, `weight.50`,
 //! `displayname.Admins`, `R=regex`, or a plain permission), exactly as LuckPerms writes it.
 
-use crate::context::ContextSet;
+use crate::horizon_luckperms_core::context::ContextSet;
 use std::cmp::Ordering;
 
 pub const MAX_PERMISSION_LENGTH: usize = 200;

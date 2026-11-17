@@ -6,9 +6,9 @@
 //!
 //! Only key paths and counts are ever reported, never values: a value can be a password.
 
-use crate::config::{Config, PlayersConsole, StackFormat};
-use crate::model::TempMerge;
-use crate::yaml::{self, Node};
+use crate::horizon_luckperms_core::config::{Config, PlayersConsole, StackFormat};
+use crate::horizon_luckperms_core::model::TempMerge;
+use crate::horizon_luckperms_core::yaml::{self, Node};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// The name of the LuckPerms config file in `plugins/LuckPerms/`.

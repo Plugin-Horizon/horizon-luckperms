@@ -2,10 +2,10 @@
 //! context filters), the permission check (direct, regex, wildcard, op) and the meta
 //! (prefix/suffix stacks, meta values, weight, primary group).
 
-use crate::config::{Config, StackFormat};
-use crate::context::{ContextSet, GlobalFlags, SatisfyMode};
-use crate::model::{Model, DEFAULT_GROUP};
-use crate::node::{expand_shorthand, Kind, Node};
+use crate::horizon_luckperms_core::config::{Config, StackFormat};
+use crate::horizon_luckperms_core::context::{ContextSet, GlobalFlags, SatisfyMode};
+use crate::horizon_luckperms_core::model::{Model, DEFAULT_GROUP};
+use crate::horizon_luckperms_core::node::{expand_shorthand, Kind, Node};
 use std::collections::{HashMap, HashSet};
 
 /// A permission's state.
@@ -50,7 +50,7 @@ pub enum HolderRef {
 impl HolderRef {
     fn name(&self, model: &Model) -> String {
         match self {
-            HolderRef::User(u) => model.users.get(u).map(|u| u.display()).unwrap_or_else(|| crate::uuid::format(*u)),
+            HolderRef::User(u) => model.users.get(u).map(|u| u.display()).unwrap_or_else(|| crate::horizon_luckperms_core::uuid::format(*u)),
             HolderRef::Group(g) => g.clone(),
         }
     }
@@ -567,8 +567,8 @@ fn accumulate_meta(model: &Model, cfg: &Config, origin: &HolderRef, order: &[Hol
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{Group, User};
-    use crate::node::key;
+    use crate::horizon_luckperms_core::model::{Group, User};
+    use crate::horizon_luckperms_core::node::key;
 
     fn g(model: &mut Model, name: &str, nodes: &[(&str, bool, &[(&str, &str)])]) {
         let mut gr = Group::new(name);

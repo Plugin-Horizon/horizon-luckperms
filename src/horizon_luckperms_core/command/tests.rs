@@ -1,12 +1,12 @@
 //! `/lp` against the in-memory storage, with a runtime that has no worker.
 
 use super::execute;
-use crate::calc::Tristate;
-use crate::config::Config;
-use crate::model::Model;
-use crate::runtime::{detached, CommandSender, OnlinePlayer, Runtime};
-use crate::storage::{MemoryStorage, Storage};
-use crate::text::split_args;
+use crate::horizon_luckperms_core::calc::Tristate;
+use crate::horizon_luckperms_core::config::Config;
+use crate::horizon_luckperms_core::model::Model;
+use crate::horizon_luckperms_core::runtime::{detached, CommandSender, OnlinePlayer, Runtime};
+use crate::horizon_luckperms_core::storage::{MemoryStorage, Storage};
+use crate::horizon_luckperms_core::text::split_args;
 
 const ALICE: u128 = 0x1111;
 const BOB: u128 = 0x2222;
@@ -31,7 +31,7 @@ fn run(rt: &Runtime, st: &mut MemoryStorage, sender: &CommandSender, line: &str)
     for a in &out.actions {
         st.log_action(a).unwrap();
     }
-    out.lines.iter().map(|l| crate::text::plain(l)).collect()
+    out.lines.iter().map(|l| crate::horizon_luckperms_core::text::plain(l)).collect()
 }
 
 fn console(rt: &Runtime, st: &mut MemoryStorage, line: &str) -> Vec<String> {
@@ -50,7 +50,7 @@ fn groups_permissions_and_inheritance() {
     // after putting her there the way a login would.
     let (nodes, _) = st.load_user(ALICE).unwrap();
     assert!(nodes.iter().any(|n| n.key == "group.mod"));
-    let mut u = crate::model::User::new(ALICE);
+    let mut u = crate::horizon_luckperms_core::model::User::new(ALICE);
     u.data.nodes = nodes.clone();
     u.saved = nodes;
     rt.model.write().unwrap().users.insert(ALICE, u);
@@ -99,7 +99,7 @@ fn prefixes_with_spaces_and_meta() {
     let (nodes, row) = st.load_user(BOB).unwrap();
     assert!(nodes.iter().any(|n| n.key == "group.admin"));
     assert_eq!(row.unwrap().primary_group, "admin");
-    let mut u = crate::model::User::new(BOB);
+    let mut u = crate::horizon_luckperms_core::model::User::new(BOB);
     u.data.nodes = nodes;
     u.primary_group = "admin".into();
     rt.model.write().unwrap().users.insert(BOB, u);
@@ -132,7 +132,7 @@ fn tracks_promote_demote() {
     let (nodes, _) = st.load_user(ALICE).unwrap();
     assert!(nodes.iter().any(|n| n.key == "group.helper"));
     assert!(!nodes.iter().any(|n| n.key == "group.mod"));
-    let log = st.actions(20, Some((crate::actionlog::TargetType::User, &crate::uuid::format(ALICE)))).unwrap();
+    let log = st.actions(20, Some((crate::horizon_luckperms_core::actionlog::TargetType::User, &crate::horizon_luckperms_core::uuid::format(ALICE)))).unwrap();
     assert!(log.iter().any(|a| a.description == "promote staff"), "{log:?}");
 }
 
@@ -191,7 +191,7 @@ fn command_gate_decisions() {
     // Users loaded as a login would.
     for u in [ALICE, BOB] {
         let (nodes, _) = st.load_user(u).unwrap();
-        let mut user = crate::model::User::new(u);
+        let mut user = crate::horizon_luckperms_core::model::User::new(u);
         user.data.nodes = nodes;
         user.give_default_if_needed();
         rt.model.write().unwrap().users.insert(u, user);

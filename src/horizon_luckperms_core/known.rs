@@ -3,7 +3,7 @@
 //! own, and every node the server or a mod asked about or registered a command for since start
 //! (the "verbose"-style collector; the glue records them as they come).
 
-use crate::config::Config;
+use crate::horizon_luckperms_core::config::Config;
 use std::collections::BTreeSet;
 use std::sync::{Mutex, OnceLock};
 
@@ -74,7 +74,7 @@ pub fn record(node: &str) {
 /// Remembers the guard node of every command root in a command tree sent to a player.
 pub fn record_commands(cfg: &Config, names: &[String]) {
     for n in names {
-        let root = crate::glue::root_of(n);
+        let root = crate::horizon_luckperms_core::glue::root_of(n);
         if !root.is_empty() {
             record(&cfg.command_node(&root));
         }

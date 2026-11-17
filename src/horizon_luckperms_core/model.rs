@@ -1,7 +1,7 @@
 //! Users, groups and tracks, with LuckPerms' rules for setting and unsetting nodes.
 
-use crate::context::ContextSet;
-use crate::node::{Equality, Kind, Node};
+use crate::horizon_luckperms_core::context::ContextSet;
+use crate::horizon_luckperms_core::node::{Equality, Kind, Node};
 use std::collections::{BTreeMap, HashMap};
 
 pub const DEFAULT_GROUP: &str = "default";
@@ -72,7 +72,7 @@ impl NodeSet {
                 let mut merged = node.clone();
                 match merge {
                     TempMerge::Accumulate => {
-                        let now = crate::duration::now();
+                        let now = crate::horizon_luckperms_core::duration::now();
                         merged.expiry = old.expiry + (node.expiry - now).max(0);
                     }
                     TempMerge::Replace => {
@@ -184,7 +184,7 @@ impl User {
         if has_global_group {
             return false;
         }
-        self.data.nodes.push(Node::permanent(crate::node::key::group(DEFAULT_GROUP), true, ContextSet::new()));
+        self.data.nodes.push(Node::permanent(crate::horizon_luckperms_core::node::key::group(DEFAULT_GROUP), true, ContextSet::new()));
         self.primary_group = DEFAULT_GROUP.into();
         true
     }
@@ -216,7 +216,7 @@ impl User {
     }
 
     pub fn display(&self) -> String {
-        self.username.clone().unwrap_or_else(|| crate::uuid::format(self.uuid))
+        self.username.clone().unwrap_or_else(|| crate::horizon_luckperms_core::uuid::format(self.uuid))
     }
 }
 
@@ -303,7 +303,7 @@ mod tests {
 
     #[test]
     fn temp_merge() {
-        let now = crate::duration::now();
+        let now = crate::horizon_luckperms_core::duration::now();
         let mut s = NodeSet::default();
         let t = Node::new("x", true, now + 100, ContextSet::new());
         assert_eq!(s.set_temp(t.clone(), TempMerge::Deny).0, Mutate::Success);

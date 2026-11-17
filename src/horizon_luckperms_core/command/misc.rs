@@ -5,13 +5,13 @@ use super::fmt::{self, aq, ctx_bracketed, dred, green};
 use super::holder::page_of;
 use super::tables::LOG_CHILDREN;
 use super::{tracks_log_usage, Ctx, Holder, Loaded, LUCKPERMS_VERSION};
-use crate::actionlog::{Action, Part, TargetType};
-use crate::context::ContextSet;
-use crate::duration;
-use crate::lang::{self, tr};
-use crate::model::{Group, DEFAULT_GROUP};
-use crate::node::{key, valid_group_name, valid_track_name, Node};
-use crate::storage::{ActionFilter, HolderKey, KeyMatch};
+use crate::horizon_luckperms_core::actionlog::{Action, Part, TargetType};
+use crate::horizon_luckperms_core::context::ContextSet;
+use crate::horizon_luckperms_core::duration;
+use crate::horizon_luckperms_core::lang::{self, tr};
+use crate::horizon_luckperms_core::model::{Group, DEFAULT_GROUP};
+use crate::horizon_luckperms_core::node::{key, valid_group_name, valid_track_name, Node};
+use crate::horizon_luckperms_core::storage::{ActionFilter, HolderKey, KeyMatch};
 use std::sync::OnceLock;
 use std::time::Instant;
 
@@ -128,7 +128,7 @@ pub(crate) fn search(c: &mut Ctx<'_>, mut a: Args) {
     for (h, n) in hits {
         match h {
             HolderKey::User(u) => {
-                let nm = c.st.name_of(u).ok().flatten().unwrap_or_else(|| crate::uuid::format(u));
+                let nm = c.st.name_of(u).ok().flatten().unwrap_or_else(|| crate::horizon_luckperms_core::uuid::format(u));
                 users.push((nm, n));
             }
             HolderKey::Group(g) => groups.push((g, n)),
@@ -256,10 +256,10 @@ fn remove_inheritance_of(c: &mut Ctx<'_>, name: &str) {
 /// `/lp listgroups [page]`
 pub(crate) fn list_groups(c: &mut Ctx<'_>, a: Args) {
     let page = a.int_or(0, 1);
-    let tracks: Vec<crate::model::Track> = c.model().tracks.values().cloned().collect();
+    let tracks: Vec<crate::horizon_luckperms_core::model::Track> = c.model().tracks.values().cloned().collect();
     let mut groups: Vec<(i32, Group)> = {
         let m = c.model();
-        m.groups.values().map(|g| (crate::calc::group_weight(&m, &c.cfg, &g.name), g.clone())).collect()
+        m.groups.values().map(|g| (crate::horizon_luckperms_core::calc::group_weight(&m, &c.cfg, &g.name), g.clone())).collect()
     };
     groups.sort_by(|x, y| y.0.cmp(&x.0).then_with(|| x.1.name.to_lowercase().cmp(&y.1.name.to_lowercase())));
     let (page, pages, slice) = page_of(&groups, 8, page);
@@ -347,9 +347,9 @@ fn log_entries_out(c: &mut Ctx<'_>, entries: &[(usize, Action)]) {
     let now = duration::now();
     for (pos, a) in entries {
         let ago = tr(lang::T_DURATION_SINCE, '7', &[low_accuracy((now - a.timestamp).max(0))]);
-        let source = if a.source_name.is_empty() || a.source_name == "null" { crate::uuid::format(a.source_uuid) } else { a.source_name.clone() };
+        let source = if a.source_name.is_empty() || a.source_name == "null" { crate::horizon_luckperms_core::uuid::format(a.source_uuid) } else { a.source_name.clone() };
         let target = if a.target_name.is_empty() || a.target_name == "null" {
-            a.target_uuid.map(crate::uuid::format).unwrap_or_else(|| a.target_name.clone())
+            a.target_uuid.map(crate::horizon_luckperms_core::uuid::format).unwrap_or_else(|| a.target_name.clone())
         } else {
             a.target_name.clone()
         };

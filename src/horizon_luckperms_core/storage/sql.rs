@@ -2,11 +2,11 @@
 //! this server reads and writes the same tables as LuckPerms on Paper and Velocity.
 
 use super::{diff, HolderKey, KeyMatch, PlayerRow, PlayerSave, Result, Storage};
-use crate::actionlog::{Action, TargetType};
-use crate::config;
-use crate::context::{ContextSet, SERVER, WORLD};
-use crate::model::{Group, Track, User, DEFAULT_GROUP};
-use crate::node::Node;
+use crate::horizon_luckperms_core::actionlog::{Action, TargetType};
+use crate::horizon_luckperms_core::config;
+use crate::horizon_luckperms_core::context::{ContextSet, SERVER, WORLD};
+use crate::horizon_luckperms_core::model::{Group, Track, User, DEFAULT_GROUP};
+use crate::horizon_luckperms_core::node::Node;
 use mysql::prelude::*;
 use mysql::{OptsBuilder, Pool, PoolConstraints, PoolOpts, PooledConn, SslOpts};
 use std::time::Duration;
@@ -188,7 +188,7 @@ impl Storage for SqlStorage {
 
     fn load_user(&mut self, uuid: u128) -> Result<(Vec<Node>, Option<PlayerRow>)> {
         let mut c = self.conn()?;
-        let id = crate::uuid::format(uuid);
+        let id = crate::horizon_luckperms_core::uuid::format(uuid);
         let nodes = self.select_nodes(&mut c, "user_permissions", "uuid", &id)?;
         let row: Option<(String, String)> = c
             .exec_first(self.q("SELECT `username`, `primary_group` FROM `{prefix}players` WHERE `uuid`=? LIMIT 1"), (&id,))
@@ -198,7 +198,7 @@ impl Storage for SqlStorage {
 
     fn save_user(&mut self, user: &User) -> Result<()> {
         let mut c = self.conn()?;
-        let id = crate::uuid::format(user.uuid);
+        let id = crate::horizon_luckperms_core::uuid::format(user.uuid);
         if !user.is_non_default() {
             // `deleteUser`: no rows, primary group back to default.
             c.exec_drop(self.q("DELETE FROM `{prefix}user_permissions` WHERE `uuid`=?"), (&id,)).map_err(err)?;
@@ -296,7 +296,7 @@ impl Storage for SqlStorage {
 
     fn save_player_data(&mut self, uuid: u128, username: &str) -> Result<PlayerSave> {
         let mut c = self.conn()?;
-        let id = crate::uuid::format(uuid);
+        let id = crate::horizon_luckperms_core::uuid::format(uuid);
         let name = username.to_lowercase();
         let mut r = PlayerSave::default();
         let current: Option<String> =
@@ -318,7 +318,7 @@ impl Storage for SqlStorage {
             .map_err(err)?;
         if !others.is_empty() {
             c.exec_drop(self.q("DELETE FROM `{prefix}players` WHERE `username`=? AND NOT `uuid`=?"), (&name, &id)).map_err(err)?;
-            r.other_uuids = others.iter().filter_map(|u| crate::uuid::parse(u)).collect();
+            r.other_uuids = others.iter().filter_map(|u| crate::horizon_luckperms_core::uuid::parse(u)).collect();
         }
         Ok(r)
     }
@@ -328,13 +328,13 @@ impl Storage for SqlStorage {
         let r: Option<String> = c
             .exec_first(self.q("SELECT `uuid` FROM `{prefix}players` WHERE `username`=? LIMIT 1"), (username.to_lowercase(),))
             .map_err(err)?;
-        Ok(r.and_then(|u| crate::uuid::parse(&u)))
+        Ok(r.and_then(|u| crate::horizon_luckperms_core::uuid::parse(&u)))
     }
 
     fn name_of(&mut self, uuid: u128) -> Result<Option<String>> {
         let mut c = self.conn()?;
         let r: Option<String> = c
-            .exec_first(self.q("SELECT `username` FROM `{prefix}players` WHERE `uuid`=? LIMIT 1"), (crate::uuid::format(uuid),))
+            .exec_first(self.q("SELECT `username` FROM `{prefix}players` WHERE `uuid`=? LIMIT 1"), (crate::horizon_luckperms_core::uuid::format(uuid),))
             .map_err(err)?;
         Ok(r.filter(|n| n != "null"))
     }
@@ -345,10 +345,10 @@ impl Storage for SqlStorage {
             self.q("INSERT INTO `{prefix}actions` (`time`, `actor_uuid`, `actor_name`, `type`, `acted_uuid`, `acted_name`, `action`) VALUES(?, ?, ?, ?, ?, ?, ?)"),
             (
                 a.timestamp,
-                crate::uuid::format(a.source_uuid),
+                crate::horizon_luckperms_core::uuid::format(a.source_uuid),
                 &a.source_name,
                 a.target_type.code().to_string(),
-                a.target_uuid.map(crate::uuid::format).unwrap_or_else(|| "null".into()),
+                a.target_uuid.map(crate::horizon_luckperms_core::uuid::format).unwrap_or_else(|| "null".into()),
                 &a.target_name,
                 &a.description,
             ),
@@ -374,10 +374,10 @@ impl Storage for SqlStorage {
             .filter_map(|(time, au, an, ty, tu, tn, d)| {
                 Some(Action {
                     timestamp: time,
-                    source_uuid: crate::uuid::parse(&au)?,
+                    source_uuid: crate::horizon_luckperms_core::uuid::parse(&au)?,
                     source_name: an,
                     target_type: TargetType::parse(&ty)?,
-                    target_uuid: if tu == "null" { None } else { crate::uuid::parse(&tu) },
+                    target_uuid: if tu == "null" { None } else { crate::horizon_luckperms_core::uuid::parse(&tu) },
                     target_name: tn,
                     description: d,
                 })
@@ -407,7 +407,7 @@ impl Storage for SqlStorage {
             .map_err(err)?;
         let mut out = Vec::new();
         for (u, id, p, v, s, w, e, x) in users {
-            if let (Some(uuid), Some(n)) = (crate::uuid::parse(&u), read_node(id, p, v, s, w, e, x)) {
+            if let (Some(uuid), Some(n)) = (crate::horizon_luckperms_core::uuid::parse(&u), read_node(id, p, v, s, w, e, x)) {
                 out.push((HolderKey::User(uuid), n));
             }
         }

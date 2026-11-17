@@ -12,16 +12,16 @@ mod tables;
 mod track;
 mod usage;
 
-use crate::actionlog::{Action, Part, TargetType};
-use crate::calc::HolderRef;
-use crate::config::Config;
-use crate::context::ContextSet;
-use crate::lang::{self, tr};
-use crate::model::{Group, Model, NodeSet, User};
-use crate::node::Node;
-use crate::runtime::{CommandSender, Runtime};
-use crate::storage::Storage;
-use crate::text::prefixed;
+use crate::horizon_luckperms_core::actionlog::{Action, Part, TargetType};
+use crate::horizon_luckperms_core::calc::HolderRef;
+use crate::horizon_luckperms_core::config::Config;
+use crate::horizon_luckperms_core::context::ContextSet;
+use crate::horizon_luckperms_core::lang::{self, tr};
+use crate::horizon_luckperms_core::model::{Group, Model, NodeSet, User};
+use crate::horizon_luckperms_core::node::Node;
+use crate::horizon_luckperms_core::runtime::{CommandSender, Runtime};
+use crate::horizon_luckperms_core::storage::Storage;
+use crate::horizon_luckperms_core::text::prefixed;
 use std::sync::Arc;
 
 #[allow(unused_imports)]
@@ -125,13 +125,13 @@ impl Ctx<'_> {
             source_name = format!("{}@{}", source_name, self.cfg.server);
         }
         self.out.actions.push(Action {
-            timestamp: crate::duration::now(),
+            timestamp: crate::horizon_luckperms_core::duration::now(),
             source_uuid: self.sender.uuid,
             source_name,
             target_type,
             target_uuid,
             target_name: target_name.to_owned(),
-            description: crate::actionlog::describe(parts),
+            description: crate::horizon_luckperms_core::actionlog::describe(parts),
         });
     }
 
@@ -220,11 +220,11 @@ impl Ctx<'_> {
     /// `UserParentCommand.parseTargetUniqueId` and the lookup: a uuid, else a name known to this server or to the
     /// players table. Tells the sender when it cannot.
     pub fn find_user(&mut self, arg: &str) -> Option<u128> {
-        if let Some(u) = crate::uuid::parse(arg) {
+        if let Some(u) = crate::horizon_luckperms_core::uuid::parse(arg) {
             return Some(u);
         }
-        let lenient = !arg.is_empty() && arg.len() <= crate::node::MAX_USERNAME_LENGTH;
-        let valid = lenient && (self.cfg.allow_invalid_usernames || crate::node::valid_username(arg));
+        let lenient = !arg.is_empty() && arg.len() <= crate::horizon_luckperms_core::node::MAX_USERNAME_LENGTH;
+        let valid = lenient && (self.cfg.allow_invalid_usernames || crate::horizon_luckperms_core::node::valid_username(arg));
         if !valid {
             self.bad(lang::T_COMMAND_MISC_LOADING_ERROR_USER_INVALID, &[fmt::dred(arg)]);
             return None;
@@ -249,7 +249,7 @@ impl Ctx<'_> {
     pub fn load_user(&mut self, uuid: u128) -> Option<Loaded> {
         let cached = self.model().users.get(&uuid).cloned();
         if let Some(mut u) = cached {
-            u.data.audit_expired(crate::duration::now());
+            u.data.audit_expired(crate::horizon_luckperms_core::duration::now());
             let before = u.saved.clone();
             return Some(Loaded { h: Holder::User(u), before });
         }
@@ -265,7 +265,7 @@ impl Ctx<'_> {
                     }
                 }
                 u.give_default_if_needed();
-                u.data.audit_expired(crate::duration::now());
+                u.data.audit_expired(crate::horizon_luckperms_core::duration::now());
                 Some(Loaded { h: Holder::User(u), before: nodes })
             }
             Err(_) => {
@@ -281,7 +281,7 @@ impl Ctx<'_> {
         let g = self.model().group_by_name_or_display(name).cloned();
         match g {
             Some(mut g) => {
-                g.data.audit_expired(crate::duration::now());
+                g.data.audit_expired(crate::horizon_luckperms_core::duration::now());
                 let before = g.data.nodes.clone();
                 Some(Loaded { h: Holder::Group(g), before })
             }
@@ -344,7 +344,7 @@ impl Ctx<'_> {
     }
 
     /// `StorageAssistant.loadTrack`
-    pub fn load_track(&mut self, name: &str) -> Option<crate::model::Track> {
+    pub fn load_track(&mut self, name: &str) -> Option<crate::horizon_luckperms_core::model::Track> {
         let lower = name.to_lowercase();
         let t = self.model().tracks.get(&lower).cloned();
         if t.is_none() {

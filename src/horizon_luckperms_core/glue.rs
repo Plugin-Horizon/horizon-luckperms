@@ -1,11 +1,11 @@
 //! What the Horizon helpers call: everything they do, minus the engine types, so it can be
 //! tested here. The helpers (in `glue/` next to `horizon-mixin.toml`) only convert.
 
-use crate::command::ROOTS;
-use crate::config::{Config, DEFAULT_TOML, FILE_NAME};
-use crate::original::{self, Reads, CONFIG_YML, CONTEXTS_JSON};
-use crate::runtime::{self, CommandSender, OnlinePlayer, Outgoing};
-use crate::storage::{MemoryStorage, Storage};
+use crate::horizon_luckperms_core::command::ROOTS;
+use crate::horizon_luckperms_core::config::{Config, DEFAULT_TOML, FILE_NAME};
+use crate::horizon_luckperms_core::original::{self, Reads, CONFIG_YML, CONTEXTS_JSON};
+use crate::horizon_luckperms_core::runtime::{self, CommandSender, OnlinePlayer, Outgoing};
+use crate::horizon_luckperms_core::storage::{MemoryStorage, Storage};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::SystemTime;
@@ -129,7 +129,7 @@ fn open_storage(cfg: &Config) -> Result<Box<dyn Storage>, String> {
 
 #[cfg(feature = "mysql")]
 fn sql_storage(cfg: &Config) -> Result<Box<dyn Storage>, String> {
-    Ok(Box::new(crate::storage::sql::SqlStorage::new(&cfg.storage)?))
+    Ok(Box::new(crate::horizon_luckperms_core::storage::sql::SqlStorage::new(&cfg.storage)?))
 }
 
 #[cfg(not(feature = "mysql"))]
@@ -196,7 +196,7 @@ pub fn tick(players: Option<Vec<OnlinePlayer>>) -> TickOut {
 /// `native_permission_check`: LuckPerms' answer for a node, None when it has no opinion
 /// (undefined, or the player is not on this server), so the server's operator level decides.
 pub fn permission(player: u128, node: &str) -> Option<bool> {
-    crate::known::record(node);
+    crate::horizon_luckperms_core::known::record(node);
     runtime::get()?.check(player, node).as_bool()
 }
 
@@ -219,7 +219,7 @@ pub fn command_level(player: u128, command: &str, level: u8) -> u8 {
 /// `native_player_commands_sent_v2`: hidden roots whose node is set true go back into the tree.
 pub fn unhide_granted(player: u128, names: &mut Vec<String>, names_hidden: &[String]) {
     let Some(rt) = runtime::get() else { return };
-    crate::known::record_commands(&rt.config(), names_hidden);
+    crate::horizon_luckperms_core::known::record_commands(&rt.config(), names_hidden);
     move_granted(names, names_hidden, |root| rt.command_decision(player, root));
 }
 
@@ -322,7 +322,7 @@ pub fn gate(player: u128, name: &str, command: &str, level: u8) -> Gate {
 /// Removes refused commands from a player's command tree.
 pub fn filter_tree(player: u128, names: &mut Vec<String>) {
     let Some(rt) = runtime::get() else { return };
-    crate::known::record_commands(&rt.config(), names);
+    crate::horizon_luckperms_core::known::record_commands(&rt.config(), names);
     names.retain(|n| rt.command_decision(player, &root_of(n)) != Some(false));
 }
 

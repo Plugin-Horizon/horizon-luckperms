@@ -2,7 +2,7 @@
 //! LuckPerms names, plus a `[horizon]` table for the parts Horizon does differently (operator
 //! levels instead of Bukkit's op flag).
 
-use crate::model::TempMerge;
+use crate::horizon_luckperms_core::model::TempMerge;
 use serde::Deserialize;
 use std::collections::BTreeMap;
 
@@ -247,7 +247,7 @@ impl Default for Config {
 }
 
 /// The file written when none exists. The password stays empty: fill it in by hand.
-pub const DEFAULT_TOML: &str = include_str!("../luckperms.example.toml");
+pub const DEFAULT_TOML: &str = include_str!("../../data/luckperms/luckperms.example.toml");
 
 impl Config {
     pub fn parse(text: &str) -> Result<Config, String> {
@@ -272,8 +272,8 @@ impl Config {
         }
     }
 
-    pub fn global_flags(&self) -> crate::context::GlobalFlags {
-        crate::context::GlobalFlags {
+    pub fn global_flags(&self) -> crate::horizon_luckperms_core::context::GlobalFlags {
+        crate::horizon_luckperms_core::context::GlobalFlags {
             include_global: self.include_global,
             include_global_world: self.include_global_world,
             apply_global_groups: self.apply_global_groups,

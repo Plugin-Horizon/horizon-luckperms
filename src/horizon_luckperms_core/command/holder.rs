@@ -5,13 +5,13 @@ use super::args::{ArgErr, Args};
 use super::fmt::{self, aq, ctx, ctx_bracketed, dur_aq, white};
 use super::tables::{holder_children, parent_subs, Child, Sub};
 use super::{child_has, Ctx, Holder, Loaded, LABEL};
-use crate::actionlog::Part;
-use crate::calc::{self, Tristate};
-use crate::context::ContextSet;
-use crate::duration::{self, format_concise, format_long};
-use crate::lang::{self, tr};
-use crate::model::{Group, Mutate, TempMerge};
-use crate::node::{key, valid_group_name, valid_track_name, Equality, Kind, Node};
+use crate::horizon_luckperms_core::actionlog::Part;
+use crate::horizon_luckperms_core::calc::{self, Tristate};
+use crate::horizon_luckperms_core::context::ContextSet;
+use crate::horizon_luckperms_core::duration::{self, format_concise, format_long};
+use crate::horizon_luckperms_core::lang::{self, tr};
+use crate::horizon_luckperms_core::model::{Group, Mutate, TempMerge};
+use crate::horizon_luckperms_core::node::{key, valid_group_name, valid_track_name, Equality, Kind, Node};
 use std::collections::HashSet;
 
 type R = Result<(), ArgErr>;
@@ -329,7 +329,7 @@ fn info(c: &mut Ctx<'_>, l: &Loaded) {
                 lang::T_COMMAND_USER_INFO_TITLE,
                 u.username.clone().unwrap_or_else(|| "Unknown".into())
             ));
-            c.msg(format!("\u{a7}3\u{a7}f- \u{a7}3{}: \u{a7}f{}", lang::T_COMMAND_USER_INFO_UUID_KEY, crate::uuid::format(u.uuid)));
+            c.msg(format!("\u{a7}3\u{a7}f- \u{a7}3{}: \u{a7}f{}", lang::T_COMMAND_USER_INFO_UUID_KEY, crate::horizon_luckperms_core::uuid::format(u.uuid)));
             c.msg(format!("\u{a7}7    ({}: \u{a7}{ty_color}{ty_name}\u{a7}7)", lang::T_COMMAND_USER_INFO_UUID_TYPE_KEY));
             let status = if online { format!("\u{a7}a{}", lang::T_COMMAND_USER_INFO_STATUS_ONLINE) } else { format!("\u{a7}c{}", lang::T_COMMAND_USER_INFO_STATUS_OFFLINE) };
             c.msg(format!("\u{a7}3\u{a7}f- \u{a7}3{}: {status}", lang::T_COMMAND_USER_INFO_STATUS_KEY));
@@ -652,7 +652,7 @@ fn check_matches(c: &Ctx<'_>, permission: &str, node: &Node) -> bool {
     if node.key == permission {
         return true;
     }
-    if c.cfg.apply_shorthand && crate::node::expand_shorthand(&node.key).iter().any(|s| s == permission) {
+    if c.cfg.apply_shorthand && crate::horizon_luckperms_core::node::expand_shorthand(&node.key).iter().any(|s| s == permission) {
         return true;
     }
     if c.cfg.apply_regex {
@@ -683,7 +683,7 @@ fn check_matches_wildcard(c: &Ctx<'_>, permission: &str, node: &Node) -> bool {
 /// `args.getLowercase(i, GROUP_NAME_TEST[_ALLOW_SPACE])`
 fn group_name_arg(a: &Args, i: usize, allow_space: bool) -> Result<String, ArgErr> {
     let s = a.get(i).to_lowercase();
-    let ok = if allow_space { !s.is_empty() && s.chars().count() <= crate::node::MAX_GROUP_NAME_LENGTH } else { valid_group_name(&s) };
+    let ok = if allow_space { !s.is_empty() && s.chars().count() <= crate::horizon_luckperms_core::node::MAX_GROUP_NAME_LENGTH } else { valid_group_name(&s) };
     if ok {
         Ok(s)
     } else {
@@ -712,7 +712,7 @@ fn give_default(l: &mut Loaded) {
     if let Holder::User(u) = &mut l.h {
         let inherits_primary = u.data.inheritance().any(|(n, g)| g == u.primary_group && n.contexts.is_empty() && n.value);
         if !inherits_primary {
-            u.primary_group = crate::model::DEFAULT_GROUP.into();
+            u.primary_group = crate::horizon_luckperms_core::model::DEFAULT_GROUP.into();
         }
         u.give_default_if_needed();
     }
@@ -1302,7 +1302,7 @@ fn meta_info(c: &mut Ctx<'_>, l: &Loaded) {
 
 fn show_tracks(c: &mut Ctx<'_>, l: &Loaded) {
     let h = l.h.arg();
-    let tracks: Vec<crate::model::Track> = c.model().tracks.values().cloned().collect();
+    let tracks: Vec<crate::horizon_luckperms_core::model::Track> = c.model().tracks.values().cloned().collect();
     let mut lines: Vec<(String, ContextSet, String)> = Vec::new();
     match &l.h {
         Holder::User(u) => {
@@ -1389,14 +1389,14 @@ fn list_members(c: &mut Ctx<'_>, l: &mut Loaded, a: Args) -> R {
     let page = a.int_or(0, 1);
     let cx = a.contexts(1);
     c.msg(format!("{}...", tr(lang::T_COMMAND_SEARCH_SEARCHING_INHERIT, 'a', &[aq(&name)])));
-    let hits = match c.st.search(&crate::storage::KeyMatch::Exact(key::group(&name))) {
+    let hits = match c.st.search(&crate::horizon_luckperms_core::storage::KeyMatch::Exact(key::group(&name))) {
         Ok(h) => h,
         Err(_) => {
             c.load_error(lang::T_COMMAND_MISC_LOADING_ERROR_ALL_GROUPS);
             return Ok(());
         }
     };
-    let wanted = |n: &Node| n.value && (cx.is_empty() || n.contexts.is_satisfied_by(&cx, crate::context::SatisfyMode::AtLeastOneValuePerKey));
+    let wanted = |n: &Node| n.value && (cx.is_empty() || n.contexts.is_satisfied_by(&cx, crate::horizon_luckperms_core::context::SatisfyMode::AtLeastOneValuePerKey));
     let mut users: Vec<(String, Node)> = Vec::new();
     let mut groups: Vec<(String, Node)> = Vec::new();
     for (h, n) in hits {
@@ -1404,14 +1404,14 @@ fn list_members(c: &mut Ctx<'_>, l: &mut Loaded, a: Args) -> R {
             continue;
         }
         match h {
-            crate::storage::HolderKey::User(u) => {
-                let nm = c.st.name_of(u).ok().flatten().unwrap_or_else(|| crate::uuid::format(u));
+            crate::horizon_luckperms_core::storage::HolderKey::User(u) => {
+                let nm = c.st.name_of(u).ok().flatten().unwrap_or_else(|| crate::horizon_luckperms_core::uuid::format(u));
                 users.push((nm, n));
             }
-            crate::storage::HolderKey::Group(gn) => groups.push((gn, n)),
+            crate::horizon_luckperms_core::storage::HolderKey::Group(gn) => groups.push((gn, n)),
         }
     }
-    if name == crate::model::DEFAULT_GROUP {
+    if name == crate::horizon_luckperms_core::model::DEFAULT_GROUP {
         let defaults: Vec<String> = c.model().users.values().filter(|u| !u.is_non_default()).map(|u| u.display()).collect();
         for d in defaults {
             users.push((d, Node::permanent(key::group(&name), true, ContextSet::new())));

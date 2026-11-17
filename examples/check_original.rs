@@ -5,7 +5,7 @@
 //! names only) and why a file could not be used. Values are never printed, and the file's directory is
 //! not printed either (only its name). Exit status 1 when a file cannot be read or used.
 
-use horizon_luckperms_core::original::{inspect_json, inspect_yaml, CONTEXTS_JSON, IGNORED};
+use mod_luckperms::horizon_luckperms_core::original::{inspect_json, inspect_yaml, CONTEXTS_JSON, IGNORED};
 use std::path::Path;
 
 fn is_ignored(key: &str) -> bool {

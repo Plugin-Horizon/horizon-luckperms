@@ -4,7 +4,7 @@
 use super::specs::{spec, Spec};
 use super::tables::Child;
 use super::Ctx;
-use crate::lang::{self, tr};
+use crate::horizon_luckperms_core::lang::{self, tr};
 
 /// `Argument.asPrettyString`
 pub fn pretty_arg(name: &str, required: bool) -> String {
@@ -86,10 +86,10 @@ impl Ctx<'_> {
         self.msg(format!("{}.", tr(lang::T_FIRST_TIME_USE_CONSOLE_TO_GIVE_ACCESS, '3', &[])));
         self.msg(format!("{}:", tr(lang::T_FIRST_TIME_CONSOLE_COMMAND_PROMPT, '3', &[])));
         let cmd = format!("/{label} user {username} permission set luckperms.* true");
-        let cmd = crate::text::rich(&format!("\u{a7}a{cmd}"), Some(crate::text::Click::SuggestCommand(cmd.clone())), Some("\u{a7}7Click to suggest the command"));
+        let cmd = crate::horizon_luckperms_core::text::rich(&format!("\u{a7}a{cmd}"), Some(crate::horizon_luckperms_core::text::Click::SuggestCommand(cmd.clone())), Some("\u{a7}7Click to suggest the command"));
         self.msg(format!("\u{a7}3 \u{a7}3\u{a7}l>\u{a7}3 {cmd}"));
         self.out.lines.push(String::new());
         self.msg(format!("{}.", tr(lang::T_FIRST_TIME_NEXT_STEP, '3', &[])));
-        self.msg(tr(lang::T_FIRST_TIME_WIKI_PROMPT, '3', &[crate::text::rich("\u{a7}7https://luckperms.net/wiki/Usage", Some(crate::text::Click::OpenUrl("https://luckperms.net/wiki/Usage".into())), Some("\u{a7}7Open the wiki"))]));
+        self.msg(tr(lang::T_FIRST_TIME_WIKI_PROMPT, '3', &[crate::horizon_luckperms_core::text::rich("\u{a7}7https://luckperms.net/wiki/Usage", Some(crate::horizon_luckperms_core::text::Click::OpenUrl("https://luckperms.net/wiki/Usage".into())), Some("\u{a7}7Open the wiki"))]));
     }
 }

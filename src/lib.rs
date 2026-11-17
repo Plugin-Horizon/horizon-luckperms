@@ -2,17 +2,19 @@
 //! `horizon-luckperms-core` crate (copied to `core/`); this file maps the glue points of the
 //! horizon-rust port (`glue/*.rs`, `horizon-mixin.toml`) onto arismoko's hooks and host methods.
 //! Everything arismoko lacks is a `TODO(arismoko-api: <name>)`; see PORT_NOTES.md.
-//! Permission nodes: this mod is the provider (`player_permission_check`), so every mod's
-//! `player.has_permission` asks LuckPerms first.
-use horizon_luckperms_core::command::ROOTS;
-use horizon_luckperms_core::glue::{self, Gate};
-use horizon_luckperms_core::runtime::OnlinePlayer;
-use horizon_luckperms_core::text as lp_text;
-use horizon_luckperms_core::Recipient;
+//! Permission nodes: HMOD-GAP(handler). This mod is no longer a permission provider on Horizon main
+//! (see the note above `impl Hooks`); the handler port is not done in this round.
+
+pub mod horizon_luckperms_core;
+use crate::horizon_luckperms_core::command::ROOTS;
+use crate::horizon_luckperms_core::glue::{self, Gate};
+use crate::horizon_luckperms_core::runtime::OnlinePlayer;
+use crate::horizon_luckperms_core::text as lp_text;
+use crate::horizon_luckperms_core::Recipient;
 use mod_api::{
-    Command, CommandArgumentValue, CommandSource, Flow, Host, Hooks, PlayerCommandEvent,
+    Command, CommandArgumentValue, CommandSource, Flow, Hooks, PlayerCommandEvent,
     PlayerCommandsSentEvent, PlayerLoggedInEvent, PlayerLoggedOutEvent, PlayerLoginEvent,
-    PlayerPermissionCheckEvent, RegisterCommandsEvent, RunModCommandEvent, ServerAboutToStartEvent,
+    RegisterCommandsEvent, RunModCommandEvent, ServerAboutToStartEvent,
     ServerHost, ServerStoppingEvent, ServerTickEvent, ServerTickPhase, Suggestion, TabCompleteEvent,
     Text,
 };
@@ -69,7 +71,7 @@ fn settle_logins(host: &mut dyn ServerHost) {
         // The reason shown to the player stays generic: the error text can name the database.
         eprintln!("[LuckPerms] data of {name} not loaded, player kicked: {failure}");
         if let Some(p) = host.player(uuid) {
-            let _ = p.kick(host, Text::literal("LuckPerms could not load your data, please try again."));
+            let _ = p.disconnect(host, Text::literal("LuckPerms could not load your data, please try again."));
         }
     }
 }
@@ -337,11 +339,11 @@ impl Hooks for Mod {
         glue::filter_tree(event.player, event.names);
     }
 
-    /// The permission provider: LuckPerms' answer for a node of a player on this server. `None`
-    /// leaves the decision to the next provider or the operator level (`player.has_permission`).
-    fn player_permission_check(&self, _: &dyn Host, event: &mut PlayerPermissionCheckEvent<'_>) -> Option<bool> {
-        glue::permission(event.player, event.node)
-    }
+    // HMOD-GAP(handler): Horizon main has no per-node provider hook. The port must become the selected
+    // permission handler: `permission_gather_handler` pushes an id, `permission_handler_query` answers
+    // each node with `glue::permission(uuid, name)` as a Boolean value (None must become an explicit
+    // error or a computed default, never a grant), and the server needs `permission-handler` set to that
+    // id. Lost meanwhile: LuckPerms no longer answers node checks (`glue::permission` is unused here).
 
     fn tab_complete(&self, _: &mut dyn ServerHost, event: &mut TabCompleteEvent<'_>) {
         let Some((start, words)) = glue::complete(event.player, event.name, event.command) else {

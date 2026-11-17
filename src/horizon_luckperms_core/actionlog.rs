@@ -1,7 +1,7 @@
 //! The action log: one row of `{prefix}actions` per change, and the JSON the messenger's `log`
 //! messages carry (`ActionJsonSerializer`).
 
-use crate::context::ContextSet;
+use crate::horizon_luckperms_core::context::ContextSet;
 use serde_json::{json, Value};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -79,11 +79,11 @@ impl Action {
     pub fn to_json(&self) -> Value {
         let mut target = json!({"type": self.target_type.name(), "name": self.target_name});
         if let Some(u) = self.target_uuid {
-            target["uniqueId"] = Value::String(crate::uuid::format(u));
+            target["uniqueId"] = Value::String(crate::horizon_luckperms_core::uuid::format(u));
         }
         json!({
             "timestamp": self.timestamp,
-            "source": {"uniqueId": crate::uuid::format(self.source_uuid), "name": self.source_name},
+            "source": {"uniqueId": crate::horizon_luckperms_core::uuid::format(self.source_uuid), "name": self.source_name},
             "target": target,
             "description": self.description,
         })
@@ -92,22 +92,22 @@ impl Action {
     /// Reads the current and the legacy layout (`actor`, `actorName`, `type`, `acted`,
     /// `actedName`, `action`).
     pub fn from_json(v: &Value) -> Option<Action> {
-        let timestamp = v.get("timestamp").and_then(Value::as_i64).unwrap_or_else(crate::duration::now);
+        let timestamp = v.get("timestamp").and_then(Value::as_i64).unwrap_or_else(crate::horizon_luckperms_core::duration::now);
         let (source_uuid, source_name) = if let Some(s) = v.get("source") {
-            (crate::uuid::parse(s.get("uniqueId")?.as_str()?)?, s.get("name")?.as_str()?.to_owned())
+            (crate::horizon_luckperms_core::uuid::parse(s.get("uniqueId")?.as_str()?)?, s.get("name")?.as_str()?.to_owned())
         } else {
-            (crate::uuid::parse(v.get("actor")?.as_str()?)?, v.get("actorName")?.as_str()?.to_owned())
+            (crate::horizon_luckperms_core::uuid::parse(v.get("actor")?.as_str()?)?, v.get("actorName")?.as_str()?.to_owned())
         };
         let (target_type, target_uuid, target_name) = if let Some(t) = v.get("target") {
             (
                 TargetType::parse(t.get("type")?.as_str()?)?,
-                t.get("uniqueId").and_then(Value::as_str).and_then(crate::uuid::parse),
+                t.get("uniqueId").and_then(Value::as_str).and_then(crate::horizon_luckperms_core::uuid::parse),
                 t.get("name")?.as_str()?.to_owned(),
             )
         } else {
             (
                 TargetType::parse(v.get("type")?.as_str()?)?,
-                v.get("acted").and_then(Value::as_str).and_then(crate::uuid::parse),
+                v.get("acted").and_then(Value::as_str).and_then(crate::horizon_luckperms_core::uuid::parse),
                 v.get("actedName")?.as_str()?.to_owned(),
             )
         };
@@ -123,13 +123,13 @@ impl Action {
     /// `Message.LOG`: the two lines players with `luckperms.log.notify` get.
     pub fn notify_line(&self, _remote: bool) -> String {
         let blank = |s: &str| s.is_empty() || s == "null";
-        let source = if blank(&self.source_name) { crate::uuid::format(self.source_uuid) } else { self.source_name.clone() };
+        let source = if blank(&self.source_name) { crate::horizon_luckperms_core::uuid::format(self.source_uuid) } else { self.source_name.clone() };
         let target = if blank(&self.target_name) {
-            self.target_uuid.map(crate::uuid::format).unwrap_or_else(|| self.target_name.clone())
+            self.target_uuid.map(crate::horizon_luckperms_core::uuid::format).unwrap_or_else(|| self.target_name.clone())
         } else {
             self.target_name.clone()
         };
-        let p = crate::text::PREFIX;
+        let p = crate::horizon_luckperms_core::text::PREFIX;
         format!(
             "{p}\u{a7}3LOG \u{a7}3\u{a7}l> \u{a7}8(\u{a7}e{source}\u{a7}8) \u{a7}8[\u{a7}a{}\u{a7}8] \u{a7}8(\u{a7}b{target}\u{a7}8)\n{p}\u{a7}3LOG \u{a7}3\u{a7}l> \u{a7}f{}",
             self.target_type.code(),

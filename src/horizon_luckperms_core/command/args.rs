@@ -1,9 +1,9 @@
 //! `ArgumentList`: the arguments after a command word, with LuckPerms' parsing of numbers, durations, temporary
 //! modifiers and contexts, and the argument-count predicates (`Predicates`) commands use.
 
-use crate::context::ContextSet;
-use crate::duration::{self, DurationError};
-use crate::model::TempMerge;
+use crate::horizon_luckperms_core::context::ContextSet;
+use crate::horizon_luckperms_core::duration::{self, DurationError};
+use crate::horizon_luckperms_core::model::TempMerge;
 
 /// What went wrong with an argument; the command answers it as LuckPerms does.
 #[derive(Clone, Debug, PartialEq, Eq)]

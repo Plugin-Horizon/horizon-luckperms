@@ -2,9 +2,9 @@
 //! paths, string lists. Each returns text that carries its own colour; `lang::tr` puts the parent colour back
 //! after it.
 
-use crate::context::ContextSet;
-use crate::duration;
-use crate::text::amp_to_section;
+use crate::horizon_luckperms_core::context::ContextSet;
+use crate::horizon_luckperms_core::duration;
+use crate::horizon_luckperms_core::text::amp_to_section;
 
 pub fn aq(s: &str) -> String {
     format!("\u{a7}b{s}")
@@ -36,11 +36,11 @@ pub fn bool_gr(b: bool) -> String {
 }
 
 /// `formatTristate`
-pub fn tristate(t: crate::calc::Tristate) -> String {
+pub fn tristate(t: crate::horizon_luckperms_core::calc::Tristate) -> String {
     match t {
-        crate::calc::Tristate::True => green("true"),
-        crate::calc::Tristate::False => "\u{a7}cfalse".into(),
-        crate::calc::Tristate::Undefined => "\u{a7}7undefined".into(),
+        crate::horizon_luckperms_core::calc::Tristate::True => green("true"),
+        crate::horizon_luckperms_core::calc::Tristate::False => "\u{a7}cfalse".into(),
+        crate::horizon_luckperms_core::calc::Tristate::Undefined => "\u{a7}7undefined".into(),
     }
 }
 
@@ -139,8 +139,8 @@ pub fn track_path_progress(groups: &[String], first: &str, second: &str, reverse
 pub fn page_info(page: usize, pages: usize, entries: usize) -> String {
     format!(
         "\u{a7}7({} \u{a7}7- {}\u{a7}7)",
-        crate::lang::tr(crate::lang::T_COMMAND_MISC_PAGE, '7', &[white(&page.to_string()), white(&pages.to_string())]),
-        crate::lang::tr(crate::lang::T_COMMAND_MISC_PAGE_ENTRIES, '7', &[white(&entries.to_string())]),
+        crate::horizon_luckperms_core::lang::tr(crate::horizon_luckperms_core::lang::T_COMMAND_MISC_PAGE, '7', &[white(&page.to_string()), white(&pages.to_string())]),
+        crate::horizon_luckperms_core::lang::tr(crate::horizon_luckperms_core::lang::T_COMMAND_MISC_PAGE_ENTRIES, '7', &[white(&entries.to_string())]),
     )
 }
 
@@ -160,13 +160,13 @@ mod tests {
     #[test]
     fn paths() {
         let g = vec!["a".to_string(), "b".to_string(), "c".to_string()];
-        assert_eq!(crate::text::plain(&track_path(&g)), "a ---> b ---> c");
-        assert_eq!(crate::text::plain(&track_path_progress(&g, "a", "b", false)), "a ---> b ---> c");
+        assert_eq!(crate::horizon_luckperms_core::text::plain(&track_path(&g)), "a ---> b ---> c");
+        assert_eq!(crate::horizon_luckperms_core::text::plain(&track_path_progress(&g, "a", "b", false)), "a ---> b ---> c");
         assert_eq!(track_path(&[]), "\u{a7}6None");
     }
 
     #[test]
     fn page_header() {
-        assert_eq!(crate::text::plain(&page_info(1, 2, 30)), "(page 1 of 2 - 30 entries)");
+        assert_eq!(crate::horizon_luckperms_core::text::plain(&page_info(1, 2, 30)), "(page 1 of 2 - 30 entries)");
     }
 }

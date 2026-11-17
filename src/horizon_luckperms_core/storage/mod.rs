@@ -1,9 +1,9 @@
 //! Storage: LuckPerms' SQL schema (`sql.rs`, MariaDB/MySQL) and an in-memory stand-in with
 //! the same behaviour for tests.
 
-use crate::actionlog::{Action, TargetType};
-use crate::model::{Group, Track, User, DEFAULT_GROUP};
-use crate::node::{Equality, Node};
+use crate::horizon_luckperms_core::actionlog::{Action, TargetType};
+use crate::horizon_luckperms_core::model::{Group, Track, User, DEFAULT_GROUP};
+use crate::horizon_luckperms_core::node::{Equality, Node};
 use std::collections::{BTreeMap, HashMap};
 
 #[cfg(feature = "mysql")]
@@ -121,7 +121,7 @@ pub trait Storage: Send {
         match filter {
             ActionFilter::All => self.actions(ALL, None),
             ActionFilter::Source(u) => Ok(self.actions(ALL, None)?.into_iter().filter(|a| a.source_uuid == *u).collect()),
-            ActionFilter::User(u) => self.actions(ALL, Some((TargetType::User, &crate::uuid::format(*u)))),
+            ActionFilter::User(u) => self.actions(ALL, Some((TargetType::User, &crate::horizon_luckperms_core::uuid::format(*u)))),
             ActionFilter::Group(g) => self.actions(ALL, Some((TargetType::Group, g))),
             ActionFilter::Track(t) => self.actions(ALL, Some((TargetType::Track, t))),
             ActionFilter::Search(q) => {
@@ -300,7 +300,7 @@ impl Storage for MemoryStorage {
             d.actions
                 .iter()
                 .rev()
-                .filter(|a| target.is_none_or(|(t, n)| a.target_type == t && (a.target_name.eq_ignore_ascii_case(n) || a.target_uuid.map(crate::uuid::format).as_deref() == Some(n))))
+                .filter(|a| target.is_none_or(|(t, n)| a.target_type == t && (a.target_name.eq_ignore_ascii_case(n) || a.target_uuid.map(crate::horizon_luckperms_core::uuid::format).as_deref() == Some(n))))
                 .take(limit)
                 .cloned()
                 .collect()
@@ -352,7 +352,7 @@ impl Storage for MemoryStorage {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::context::ContextSet;
+    use crate::horizon_luckperms_core::context::ContextSet;
 
     #[test]
     fn diff_works() {

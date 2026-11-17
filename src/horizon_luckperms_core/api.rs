@@ -2,8 +2,8 @@
 //! suffix, meta and groups of an online player in their current contexts. All read from the
 //! cache; none touches the database. Everything is "nothing" while the service is not running.
 
-use crate::calc::{self, MetaData, Tristate};
-use crate::runtime;
+use crate::horizon_luckperms_core::calc::{self, MetaData, Tristate};
+use crate::horizon_luckperms_core::runtime;
 use std::collections::BTreeSet;
 use std::sync::{Mutex, OnceLock};
 

@@ -5,14 +5,14 @@
 //! The game thread never touches the database: it hands jobs to the worker and drains the
 //! outbox once a tick.
 
-use crate::actionlog::Action;
-use crate::calc::{self, HolderRef, Resolved, Tristate};
-use crate::command::{self, CmdOutput};
-use crate::config::Config;
-use crate::context::{self, ContextSet};
-use crate::messaging::{Message, SeenIds, UpdateBuffer};
-use crate::model::{Model, User};
-use crate::storage::Storage;
+use crate::horizon_luckperms_core::actionlog::Action;
+use crate::horizon_luckperms_core::calc::{self, HolderRef, Resolved, Tristate};
+use crate::horizon_luckperms_core::command::{self, CmdOutput};
+use crate::horizon_luckperms_core::config::Config;
+use crate::horizon_luckperms_core::context::{self, ContextSet};
+use crate::horizon_luckperms_core::messaging::{Message, SeenIds, UpdateBuffer};
+use crate::horizon_luckperms_core::model::{Model, User};
+use crate::horizon_luckperms_core::storage::Storage;
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
@@ -55,7 +55,7 @@ pub struct CommandSender {
 
 impl CommandSender {
     pub fn console() -> Self {
-        CommandSender { uuid: crate::uuid::CONSOLE, name: "Console".into(), console: true }
+        CommandSender { uuid: crate::horizon_luckperms_core::uuid::CONSOLE, name: "Console".into(), console: true }
     }
 }
 
@@ -116,7 +116,7 @@ pub fn start(cfg: Config, mut storage: Box<dyn Storage>, level_name: &str) -> Re
         model.groups.insert(g.name.clone(), g);
     }
     if model.ensure_default_group() {
-        storage.create_group(crate::model::DEFAULT_GROUP)?;
+        storage.create_group(crate::horizon_luckperms_core::model::DEFAULT_GROUP)?;
     }
     for t in storage.load_all_tracks()? {
         model.tracks.insert(t.name.clone(), t);
@@ -327,14 +327,14 @@ impl Runtime {
         }
         let cfg = self.config();
         let r = if model.users.contains_key(&uuid) {
-            Arc::new(calc::resolve(&model, &cfg, &HolderRef::User(uuid), contexts, op, crate::duration::now()))
+            Arc::new(calc::resolve(&model, &cfg, &HolderRef::User(uuid), contexts, op, crate::horizon_luckperms_core::duration::now()))
         } else {
             // Not loaded (yet): a member of default, as LuckPerms treats a user without data.
             let mut m = model.clone();
             let mut u = User::new(uuid);
             u.give_default_if_needed();
             m.users.insert(uuid, u);
-            Arc::new(calc::resolve(&m, &cfg, &HolderRef::User(uuid), contexts, op, crate::duration::now()))
+            Arc::new(calc::resolve(&m, &cfg, &HolderRef::User(uuid), contexts, op, crate::horizon_luckperms_core::duration::now()))
         };
         drop(model);
         let mut cache = self.cache.lock().unwrap_or_else(|e| e.into_inner());
@@ -357,7 +357,7 @@ impl Runtime {
         };
         // Bukkit's plugin.yml `default: true`: a node a plugin registered as default-true, which the
         // permissions leave undefined, is true (`apply-bukkit-default-permissions`).
-        if set == Tristate::Undefined && self.config().apply_bukkit_default_permissions && crate::api::is_default_true(permission) {
+        if set == Tristate::Undefined && self.config().apply_bukkit_default_permissions && crate::horizon_luckperms_core::api::is_default_true(permission) {
             return Tristate::True;
         }
         set
@@ -419,7 +419,7 @@ impl Runtime {
 
     /// Runs `/lp <args>` on the worker; the answer arrives through the outbox.
     pub fn submit_command(&self, sender: CommandSender, line: &str) {
-        let args = crate::text::split_args(line);
+        let args = crate::horizon_luckperms_core::text::split_args(line);
         self.send(Job::Command { sender, args });
     }
 
@@ -474,7 +474,7 @@ impl Worker {
             match rx.recv_timeout(Duration::from_millis(200)) {
                 Ok(Job::Shutdown) | Err(mpsc::RecvTimeoutError::Disconnected) => {
                     if self.buffer.pending() {
-                        self.push(Message::Update { id: crate::uuid::random_v4() });
+                        self.push(Message::Update { id: crate::horizon_luckperms_core::uuid::random_v4() });
                     }
                     return;
                 }
@@ -512,7 +512,7 @@ impl Worker {
             Job::SyncAll { push } => {
                 self.sync_all();
                 if push {
-                    self.push(Message::Update { id: crate::uuid::random_v4() });
+                    self.push(Message::Update { id: crate::horizon_luckperms_core::uuid::random_v4() });
                 }
             }
             Job::ReloadConfig(cfg) => {
@@ -531,18 +531,18 @@ impl Worker {
     fn load_user(&mut self, uuid: u128, name: Option<&str>) -> Result<(), String> {
         if let Some(name) = name {
             if let Err(e) = self.storage.save_player_data(uuid, name) {
-                log(&format!("could not save the name of {}: {e}", crate::uuid::format(uuid)));
+                log(&format!("could not save the name of {}: {e}", crate::horizon_luckperms_core::uuid::format(uuid)));
             }
         }
         let (nodes, row) = self
             .storage
             .load_user(uuid)
-            .map_err(|e| format!("could not load {}: {e}", crate::uuid::format(uuid)))?;
+            .map_err(|e| format!("could not load {}: {e}", crate::horizon_luckperms_core::uuid::format(uuid)))?;
         let mut u = User::new(uuid);
         u.data.nodes = nodes.clone();
         u.saved = nodes;
         if let Some(r) = row {
-            u.primary_group = if r.primary_group.is_empty() { crate::model::DEFAULT_GROUP.into() } else { r.primary_group.to_lowercase() };
+            u.primary_group = if r.primary_group.is_empty() { crate::horizon_luckperms_core::model::DEFAULT_GROUP.into() } else { r.primary_group.to_lowercase() };
             if r.username != "null" {
                 u.username = Some(r.username);
             }
@@ -607,7 +607,7 @@ impl Worker {
             }
             self.notify(a, false, Some(sender.uuid));
             if cfg.push_log_entries {
-                self.push(Message::Log { id: crate::uuid::random_v4(), action: a.clone() });
+                self.push(Message::Log { id: crate::horizon_luckperms_core::uuid::random_v4(), action: a.clone() });
             }
         }
         if out.sync {
@@ -615,14 +615,14 @@ impl Worker {
         }
         if cfg.auto_push_updates {
             for u in out.user_updates {
-                self.push(Message::UserUpdate { id: crate::uuid::random_v4(), user: u });
+                self.push(Message::UserUpdate { id: crate::horizon_luckperms_core::uuid::random_v4(), user: u });
             }
             if out.group_changed {
                 self.buffer.request();
             }
         }
         if out.network_sync {
-            self.push(Message::Update { id: crate::uuid::random_v4() });
+            self.push(Message::Update { id: crate::horizon_luckperms_core::uuid::random_v4() });
         }
     }
 
@@ -643,7 +643,7 @@ impl Worker {
         }
         let line = a.notify_line(remote);
         // The console is a sender too: it is skipped for what it did itself.
-        if except != Some(crate::uuid::CONSOLE) {
+        if except != Some(crate::horizon_luckperms_core::uuid::CONSOLE) {
             self.rt.push_out(Recipient::Console, line.clone());
         }
         for p in self.rt.online_players() {
@@ -679,7 +679,7 @@ impl Worker {
             let _ = self.storage.messenger_housekeep();
         }
         if self.buffer.take_due() {
-            self.push(Message::Update { id: crate::uuid::random_v4() });
+            self.push(Message::Update { id: crate::horizon_luckperms_core::uuid::random_v4() });
         }
         if cfg.sync_minutes > 0 && self.last_sync.elapsed() >= Duration::from_secs(cfg.sync_minutes as u64 * 60) {
             self.last_sync = Instant::now();
@@ -701,7 +701,7 @@ impl Worker {
         }
         match msg {
             Message::Update { id } => {
-                log(&format!("[Messaging] Received update ping with id: {}", crate::uuid::format(id)));
+                log(&format!("[Messaging] Received update ping with id: {}", crate::horizon_luckperms_core::uuid::format(id)));
                 self.sync_all();
             }
             Message::UserUpdate { user, .. } => {
@@ -723,7 +723,7 @@ impl Worker {
 
     /// `ExpireTemporaryTask`: expired temporary nodes leave, and the change is saved.
     fn audit_expired(&mut self) {
-        let now = crate::duration::now();
+        let now = crate::horizon_luckperms_core::duration::now();
         let (users, groups) = {
             let mut m = self.rt.model.write().unwrap_or_else(|e| e.into_inner());
             let mut users = Vec::new();
@@ -783,7 +783,7 @@ impl Worker {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::storage::MemoryStorage;
+    use crate::horizon_luckperms_core::storage::MemoryStorage;
 
     fn wait_for(f: impl Fn() -> bool) {
         for _ in 0..100 {
@@ -817,11 +817,11 @@ mod tests {
         assert!(out.iter().any(|o| o.to == Recipient::Console));
         assert_eq!(storage.inner.lock().unwrap().user_nodes.get(&alice).map(|n| n.len()), Some(2));
         // The API other mods use (api.rs): the answers match what the runtime resolved.
-        assert_eq!(crate::api::permission(alice, "essentials.fly"), Some(false));
-        assert_eq!(crate::api::permission(alice, "essentials.speed"), None);
-        assert_eq!(crate::api::primary_group(alice).as_deref(), Some("default"));
-        assert_eq!(crate::api::weight(alice), Some(0), "the default group has no weight node");
-        assert_eq!(crate::api::weight(0xdead), None, "not on this server");
+        assert_eq!(crate::horizon_luckperms_core::api::permission(alice, "essentials.fly"), Some(false));
+        assert_eq!(crate::horizon_luckperms_core::api::permission(alice, "essentials.speed"), None);
+        assert_eq!(crate::horizon_luckperms_core::api::primary_group(alice).as_deref(), Some("default"));
+        assert_eq!(crate::horizon_luckperms_core::api::weight(alice), Some(0), "the default group has no weight node");
+        assert_eq!(crate::horizon_luckperms_core::api::weight(0xdead), None, "not on this server");
         stop();
     }
 }
@@ -829,7 +829,7 @@ mod tests {
 #[cfg(test)]
 mod pre_login_tests {
     use super::*;
-    use crate::storage::MemoryStorage;
+    use crate::horizon_luckperms_core::storage::MemoryStorage;
     use std::sync::atomic::Ordering;
 
     fn worker(storage: MemoryStorage) -> (Arc<Runtime>, Worker) {
@@ -889,14 +889,14 @@ mod pre_login_tests {
         let (rt, _) = worker(MemoryStorage::default());
         let p = 0xd3f;
         rt.update_players(vec![OnlinePlayer { uuid: p, name: "Dee".into(), op_level: 0, dimension: "minecraft:overworld".into(), game_mode: 0 }]);
-        crate::api::register_default_true("Test.Default.Node");
-        assert!(crate::api::is_default_true("test.default.node"));
+        crate::horizon_luckperms_core::api::register_default_true("Test.Default.Node");
+        assert!(crate::horizon_luckperms_core::api::is_default_true("test.default.node"));
         assert_eq!(rt.check(p, "test.default.node"), Tristate::True);
         // An explicit false still wins.
         {
             let mut m = rt.model.write().unwrap();
-            let node = crate::node::Node::permanent("test.default.node", false, crate::context::ContextSet::new());
-            m.users.entry(p).or_insert_with(|| crate::model::User::new(p)).data.set(node);
+            let node = crate::horizon_luckperms_core::node::Node::permanent("test.default.node", false, crate::horizon_luckperms_core::context::ContextSet::new());
+            m.users.entry(p).or_insert_with(|| crate::horizon_luckperms_core::model::User::new(p)).data.set(node);
             m.touch();
         }
         assert_eq!(rt.check(p, "test.default.node"), Tristate::False);

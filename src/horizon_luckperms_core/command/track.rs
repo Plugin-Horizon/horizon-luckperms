@@ -4,10 +4,10 @@ use super::args::Args;
 use super::fmt::{self, aq, dred};
 use super::tables::TRACK_CHILDREN;
 use super::{tracks_log_usage, Ctx, Holder};
-use crate::actionlog::{Part, TargetType};
-use crate::lang::{self, tr};
-use crate::model::Track;
-use crate::node::{valid_group_name, valid_track_name};
+use crate::horizon_luckperms_core::actionlog::{Part, TargetType};
+use crate::horizon_luckperms_core::lang::{self, tr};
+use crate::horizon_luckperms_core::model::Track;
+use crate::horizon_luckperms_core::node::{valid_group_name, valid_track_name};
 
 fn log_track(c: &mut Ctx<'_>, t: &str, parts: &[Part<'_>]) {
     c.log(TargetType::Track, None, t, parts);

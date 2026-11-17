@@ -2,7 +2,7 @@
 //! `userupdate`, `log`, `custom`) and the bookkeeping around them (ids already seen, the
 //! buffered update push). The SQL transport (`{prefix}messenger`) lives in the storage.
 
-use crate::actionlog::Action;
+use crate::horizon_luckperms_core::actionlog::Action;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
@@ -30,11 +30,11 @@ impl Message {
     pub fn encode(&self) -> String {
         let (ty, content) = match self {
             Message::Update { .. } => ("update", None),
-            Message::UserUpdate { user, .. } => ("userupdate", Some(json!({"userUuid": crate::uuid::format(*user)}))),
+            Message::UserUpdate { user, .. } => ("userupdate", Some(json!({"userUuid": crate::horizon_luckperms_core::uuid::format(*user)}))),
             Message::Log { action, .. } => ("log", Some(action.to_json())),
             Message::Custom { channel, payload, .. } => ("custom", Some(json!({"channelId": channel, "payload": payload}))),
         };
-        let mut obj = json!({"id": crate::uuid::format(self.id()), "type": ty});
+        let mut obj = json!({"id": crate::horizon_luckperms_core::uuid::format(self.id()), "type": ty});
         if let Some(c) = content {
             obj["content"] = c;
         }
@@ -45,12 +45,12 @@ impl Message {
     /// too).
     pub fn decode(s: &str) -> Option<Message> {
         let v: Value = serde_json::from_str(s).ok()?;
-        let id = crate::uuid::parse(v.get("id")?.as_str()?)?;
+        let id = crate::horizon_luckperms_core::uuid::parse(v.get("id")?.as_str()?)?;
         let content = v.get("content");
         match v.get("type")?.as_str()? {
             "update" => Some(Message::Update { id }),
             "userupdate" => {
-                let user = crate::uuid::parse(content?.get("userUuid")?.as_str()?)?;
+                let user = crate::horizon_luckperms_core::uuid::parse(content?.get("userUuid")?.as_str()?)?;
                 Some(Message::UserUpdate { id, user })
             }
             "log" => Some(Message::Log { id, action: Action::from_json(content?)? }),
@@ -117,13 +117,13 @@ impl UpdateBuffer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::actionlog::TargetType;
+    use crate::horizon_luckperms_core::actionlog::TargetType;
 
     #[test]
     fn encodes_like_luckperms() {
-        let id = crate::uuid::parse("d3a1f0e2-0000-4000-8000-000000000001").unwrap();
+        let id = crate::horizon_luckperms_core::uuid::parse("d3a1f0e2-0000-4000-8000-000000000001").unwrap();
         assert_eq!(Message::Update { id }.encode(), r#"{"id":"d3a1f0e2-0000-4000-8000-000000000001","type":"update"}"#);
-        let user = crate::uuid::parse("069a79f4-44e9-4726-a5be-fca90e38aaf5").unwrap();
+        let user = crate::horizon_luckperms_core::uuid::parse("069a79f4-44e9-4726-a5be-fca90e38aaf5").unwrap();
         let m = Message::UserUpdate { id, user };
         // Key order differs from Gson's (it does not matter to a JSON reader); compare values.
         let want: serde_json::Value = serde_json::from_str(

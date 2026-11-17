@@ -16,14 +16,14 @@
 use super::args::Args;
 use super::fmt::{self, aq, dred};
 use super::{Ctx, Holder, Loaded, LABEL};
-use crate::actionlog::{Part, TargetType};
-use crate::bytebin::{self, HttpError};
-use crate::calc;
-use crate::context::ContextSet;
-use crate::lang::{self, tr};
-use crate::model::{Group, Track, User};
-use crate::node::{valid_group_name, valid_track_name, Equality, Kind, Node, MAX_PERMISSION_LENGTH};
-use crate::storage::{HolderKey, KeyMatch};
+use crate::horizon_luckperms_core::actionlog::{Part, TargetType};
+use crate::horizon_luckperms_core::bytebin::{self, HttpError};
+use crate::horizon_luckperms_core::calc;
+use crate::horizon_luckperms_core::context::ContextSet;
+use crate::horizon_luckperms_core::lang::{self, tr};
+use crate::horizon_luckperms_core::model::{Group, Track, User};
+use crate::horizon_luckperms_core::node::{valid_group_name, valid_track_name, Equality, Kind, Node, MAX_PERMISSION_LENGTH};
+use crate::horizon_luckperms_core::storage::{HolderKey, KeyMatch};
 use serde_json::{json, Map, Value};
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
@@ -95,7 +95,7 @@ pub(crate) fn node_json(n: &Node) -> Value {
 /// The id the editor knows a holder by: a group's name, a user's UUID.
 fn holder_id(k: &HolderKey) -> (&'static str, String) {
     match k {
-        HolderKey::User(u) => ("user", crate::uuid::format(*u)),
+        HolderKey::User(u) => ("user", crate::horizon_luckperms_core::uuid::format(*u)),
         HolderKey::Group(g) => ("group", g.clone()),
     }
 }
@@ -139,7 +139,7 @@ pub(crate) fn build_payload(
     json!({
         "metadata": {
             "commandAlias": label,
-            "uploader": {"name": uploader_name, "uuid": crate::uuid::format(uploader_uuid)},
+            "uploader": {"name": uploader_name, "uuid": crate::horizon_luckperms_core::uuid::format(uploader_uuid)},
             "time": now_ms,
             "pluginVersion": super::LUCKPERMS_VERSION,
             "platform": "Horizon",
@@ -305,8 +305,8 @@ fn open_session(c: &mut Ctx<'_>, holders: Vec<EditorHolder>, tracks: Vec<Track>)
     if c.sender.console && c.cfg.server != "global" {
         uploader = format!("{}@{}", uploader, c.cfg.server);
     }
-    let now_ms = crate::duration::now() * 1000;
-    let payload = build_payload(&holders, &tracks, &uploader, c.sender.uuid, LABEL, &potential, now_ms, &crate::known::all(&c.cfg));
+    let now_ms = crate::horizon_luckperms_core::duration::now() * 1000;
+    let payload = build_payload(&holders, &tracks, &uploader, c.sender.uuid, LABEL, &potential, now_ms, &crate::horizon_luckperms_core::known::all(&c.cfg));
     let json = payload.to_string();
     if personal_data_in(&json) {
         c.msg("\u{a7}cThe editor session was not opened: the data contains something that looks like an IP address, and those are never uploaded. Remove it from the permissions first.");
@@ -326,9 +326,9 @@ fn open_session(c: &mut Ctx<'_>, holders: Vec<EditorHolder>, tracks: Vec<Track>)
             add_session(&id, request_of(&holders));
             let url = format!("{}{}", cfg.web_editor_url, id);
             c.msg(format!("{}:", tr(lang::T_COMMAND_EDITOR_URL, 'a', &[])));
-            c.raw(crate::text::rich(
+            c.raw(crate::horizon_luckperms_core::text::rich(
                 &format!("\u{a7}b{url}"),
-                Some(crate::text::Click::OpenUrl(url.clone())),
+                Some(crate::horizon_luckperms_core::text::Click::OpenUrl(url.clone())),
                 Some(&format!("\u{a7}7{}", tr(lang::T_COMMAND_EDITOR_URL, '7', &[]))),
             ));
         }
@@ -390,7 +390,7 @@ pub(crate) fn editor(c: &mut Ctx<'_>, a: Args) {
 pub(crate) fn holder_editor(c: &mut Ctx<'_>, l: &Loaded) {
     let mut holders: Vec<EditorHolder> = Vec::new();
     if let Holder::Group(g) = &l.h {
-        let key = KeyMatch::Exact(crate::node::key::group(&g.name));
+        let key = KeyMatch::Exact(crate::horizon_luckperms_core::node::key::group(&g.name));
         holders.extend(matching_users(c, &[key], true).iter().map(user_holder));
     }
     holders.push(match &l.h {
@@ -407,7 +407,7 @@ pub(crate) fn track_editor(c: &mut Ctx<'_>, t: &Track) {
         c.msg(format!("{}.", tr(lang::T_COMMAND_EDITOR_NO_MATCH, 'c', &[])));
         return;
     }
-    let matchers: Vec<KeyMatch> = groups.iter().map(|g| KeyMatch::Exact(crate::node::key::group(&g.name))).collect();
+    let matchers: Vec<KeyMatch> = groups.iter().map(|g| KeyMatch::Exact(crate::horizon_luckperms_core::node::key::group(&g.name))).collect();
     let users = matching_users(c, &matchers, true);
     let mut holders: Vec<EditorHolder> = groups.iter().map(group_holder).collect();
     holders.extend(users.iter().map(user_holder));
@@ -429,7 +429,7 @@ pub(crate) fn trust_editor(c: &mut Ctx<'_>, a: Args) {
 /// The `--force` command as a click-to-suggest segment.
 fn force_cmd(label: &str, code: &str) -> String {
     let cmd = format!("/{label} applyedits {code} --force");
-    crate::text::rich(&format!("\u{a7}4{cmd}"), Some(crate::text::Click::SuggestCommand(cmd.clone())), Some("\u{a7}7Click to suggest the command"))
+    crate::horizon_luckperms_core::text::rich(&format!("\u{a7}4{cmd}"), Some(crate::horizon_luckperms_core::text::Click::SuggestCommand(cmd.clone())), Some("\u{a7}7Click to suggest the command"))
 }
 
 /// `/lp applyedits <code> [--force]`
@@ -609,7 +609,7 @@ pub(crate) fn parse_nodes(v: Option<&Value>, now: i64) -> Option<(Vec<Node>, usi
 
 /// `Difference<Node>` applied the way `NodeMapMutable.applyChanges` does: the removals (exact
 /// matches), then the additions (an equal node of another value or expiry is replaced).
-pub(crate) fn apply_node_diff(set: &mut crate::model::NodeSet, before: &[Node], after: &[Node]) -> (Vec<Node>, Vec<Node>) {
+pub(crate) fn apply_node_diff(set: &mut crate::horizon_luckperms_core::model::NodeSet, before: &[Node], after: &[Node]) -> (Vec<Node>, Vec<Node>) {
     // recordChanges(REMOVE, before); recordChanges(ADD, after): equal ones cancel.
     let remove: Vec<&Node> = before.iter().filter(|b| !after.contains(b)).collect();
     let add: Vec<&Node> = after.iter().filter(|n| !before.contains(n)).collect();
@@ -634,15 +634,15 @@ pub(crate) fn apply_node_diff(set: &mut crate::model::NodeSet, before: &[Node], 
 
 fn holder_change(c: &mut Ctx<'_>, request: Option<&Request>, change: &Value, ty: &str) -> bool {
     let Some(id) = change.get("id").and_then(Value::as_str) else { return false };
-    let now = crate::duration::now();
+    let now = crate::horizon_luckperms_core::duration::now();
     let (mut l, key) = if ty == "user" {
-        let Some(uuid) = crate::uuid::parse(id) else {
+        let Some(uuid) = crate::horizon_luckperms_core::uuid::parse(id) else {
             let shown: String = id.chars().filter(|c| !c.is_control()).take(40).collect();
             c.bad(lang::T_COMMAND_MISC_LOADING_ERROR_USER_NOT_UUID, &[dred(&shown)]);
             return false;
         };
         let Some(l) = c.load_user(uuid) else {
-            c.bad(lang::T_COMMAND_MISC_LOADING_ERROR_USER_SPECIFIC, &[dred(&crate::uuid::format(uuid))]);
+            c.bad(lang::T_COMMAND_MISC_LOADING_ERROR_USER_SPECIFIC, &[dred(&crate::horizon_luckperms_core::uuid::format(uuid))]);
             return false;
         };
         (l, HolderKey::User(uuid))
@@ -684,7 +684,7 @@ fn holder_change(c: &mut Ctx<'_>, request: Option<&Request>, change: &Value, ty:
         }
         // Otherwise the editor's list replaces the holder's nodes (`setNodes`).
         None => {
-            let (a, r) = crate::storage::diff(&l.h.data().nodes, &new_nodes);
+            let (a, r) = crate::horizon_luckperms_core::storage::diff(&l.h.data().nodes, &new_nodes);
             l.h.data_mut().nodes = new_nodes;
             (a, r)
         }
@@ -745,7 +745,7 @@ pub(crate) fn node_text(n: &Node, now: i64) -> String {
         out.push_str(&fmt::ctx_bracketed(&n.contexts, ""));
     }
     if n.has_expiry() {
-        out.push_str(&format!(" \u{a7}7({})", crate::duration::format_concise((n.expiry - now).max(0))));
+        out.push_str(&format!(" \u{a7}7({})", crate::horizon_luckperms_core::duration::format_concise((n.expiry - now).max(0))));
     }
     out
 }
@@ -816,7 +816,7 @@ fn shown(s: &str) -> String {
 
 fn delete_user(c: &mut Ctx<'_>, v: &Value) -> bool {
     let Some(id) = v.as_str() else { return false };
-    let Some(uuid) = crate::uuid::parse(id) else {
+    let Some(uuid) = crate::horizon_luckperms_core::uuid::parse(id) else {
         c.bad(lang::T_COMMAND_MISC_LOADING_ERROR_USER_NOT_UUID, &[dred(&shown(id))]);
         return false;
     };
@@ -836,7 +836,7 @@ fn delete_user(c: &mut Ctx<'_>, v: &Value) -> bool {
 
 fn delete_group(c: &mut Ctx<'_>, v: &Value) -> bool {
     let Some(name) = v.as_str().map(str::to_lowercase) else { return false };
-    if name == crate::model::DEFAULT_GROUP {
+    if name == crate::horizon_luckperms_core::model::DEFAULT_GROUP {
         c.msg(format!("{}.", tr(lang::T_COMMAND_GROUP_DELETE_NOT_DEFAULT, 'c', &[])));
         return true;
     }
@@ -881,13 +881,13 @@ fn delete_track(c: &mut Ctx<'_>, v: &Value) -> bool {
 #[cfg(all(test, feature = "net"))]
 mod tests {
     use super::*;
-    use crate::bytebin::{set_test_client, Bytebin};
-    use crate::command::execute;
-    use crate::config::Config;
-    use crate::model::Model;
-    use crate::runtime::{detached, CommandSender, OnlinePlayer, Runtime};
-    use crate::storage::{MemoryStorage, Storage};
-    use crate::text::{plain, split_args};
+    use crate::horizon_luckperms_core::bytebin::{set_test_client, Bytebin};
+    use crate::horizon_luckperms_core::command::execute;
+    use crate::horizon_luckperms_core::config::Config;
+    use crate::horizon_luckperms_core::model::Model;
+    use crate::horizon_luckperms_core::runtime::{detached, CommandSender, OnlinePlayer, Runtime};
+    use crate::horizon_luckperms_core::storage::{MemoryStorage, Storage};
+    use crate::horizon_luckperms_core::text::{plain, split_args};
     use std::cell::RefCell;
     use std::rc::Rc;
 
@@ -974,7 +974,7 @@ mod tests {
         assert_eq!(n[0], json!({"type": "inheritance", "key": "group.default", "value": true}));
         assert_eq!(n[1], json!({"type": "permission", "key": "essentials.fly", "value": true, "expiry": 4_000_000_000i64, "context": {"world": "nether"}}));
         assert_eq!(p["permissionHolders"][1]["type"], "user");
-        assert_eq!(p["permissionHolders"][1]["id"], crate::uuid::format(ALICE));
+        assert_eq!(p["permissionHolders"][1]["id"], crate::horizon_luckperms_core::uuid::format(ALICE));
         assert_eq!(p["permissionHolders"][1]["nodes"][0]["type"], "prefix");
         assert_eq!(p["tracks"][0], json!({"type": "track", "id": "staff", "groups": ["default", "admin"]}));
         assert_eq!(p["knownPermissions"], json!(["essentials.fly", "minecraft.command.gamemode"]));
@@ -1044,7 +1044,7 @@ mod tests {
         let p = posted_json(&fake, 0);
         let ids: Vec<&str> = p["permissionHolders"].as_array().unwrap().iter().map(|h| h["id"].as_str().unwrap()).collect();
         assert_eq!(&ids[..2], ["mod", "default"], "groups by weight, high first: {ids:?}");
-        assert!(ids.contains(&crate::uuid::format(BOB).as_str()), "offline users come from storage: {ids:?}");
+        assert!(ids.contains(&crate::horizon_luckperms_core::uuid::format(BOB).as_str()), "offline users come from storage: {ids:?}");
         assert_eq!(p["tracks"][0]["id"], "staff");
         assert!(!personal_data_in(&p.to_string()));
     }
@@ -1061,7 +1061,7 @@ mod tests {
         let p = posted_json(&fake, 1);
         let hs = p["permissionHolders"].as_array().unwrap();
         assert_eq!(hs.len(), 1, "{hs:?}");
-        assert_eq!(hs[0]["id"], crate::uuid::format(BOB));
+        assert_eq!(hs[0]["id"], crate::horizon_luckperms_core::uuid::format(BOB));
         assert!(p["tracks"].as_array().unwrap().is_empty(), "users only: no tracks");
         // a first argument that is no type is the filter
         run(&rt, &mut st, "editor bob.");
@@ -1105,7 +1105,7 @@ mod tests {
         run(&rt, &mut st, "track staff append mod");
         run(&rt, &mut st, "group mod editor");
         let ids: Vec<String> = posted_json(&fake, 0)["permissionHolders"].as_array().unwrap().iter().map(|h| h["id"].as_str().unwrap().to_owned()).collect();
-        assert_eq!(ids, vec![crate::uuid::format(BOB), "mod".to_owned()], "members first, the group last");
+        assert_eq!(ids, vec![crate::horizon_luckperms_core::uuid::format(BOB), "mod".to_owned()], "members first, the group last");
         run(&rt, &mut st, "track staff editor");
         let p = posted_json(&fake, 1);
         assert_eq!(p["tracks"][0]["id"], "staff");
@@ -1191,7 +1191,7 @@ mod tests {
             &fake,
             "d1",
             json!({"sessionId": "none", "changes": [{"type": "track", "id": "staff", "groups": ["admin", "mod"]}],
-                   "groupDeletions": ["admin", "default", "ghost"], "trackDeletions": ["old"], "userDeletions": [crate::uuid::format(BOB)]}),
+                   "groupDeletions": ["admin", "default", "ghost"], "trackDeletions": ["old"], "userDeletions": [crate::horizon_luckperms_core::uuid::format(BOB)]}),
         );
         let out = run(&rt, &mut st, "applyedits d1 --force");
         let all = out.join("\n");
@@ -1278,7 +1278,7 @@ mod tests {
 
     #[test]
     fn node_diff_replaces_and_cancels() {
-        let mut set = crate::model::NodeSet { nodes: vec![node("a", true), node("b", true), node("c", true)] };
+        let mut set = crate::horizon_luckperms_core::model::NodeSet { nodes: vec![node("a", true), node("b", true), node("c", true)] };
         let before = vec![node("a", true), node("b", true), node("c", true)];
         // a unchanged, b flipped to false, c gone, d new
         let after = vec![node("a", true), node("b", false), node("d", true)];
@@ -1290,7 +1290,7 @@ mod tests {
         left.sort();
         assert_eq!(left, ["a=true", "b=false", "d=true"]);
         // a node somebody else added meanwhile survives
-        let mut set = crate::model::NodeSet { nodes: vec![node("a", true), node("later", true)] };
+        let mut set = crate::horizon_luckperms_core::model::NodeSet { nodes: vec![node("a", true), node("later", true)] };
         let (added, removed) = apply_node_diff(&mut set, &[node("a", true)], &[node("a", true)]);
         assert!(added.is_empty() && removed.is_empty() && set.nodes.len() == 2);
     }
