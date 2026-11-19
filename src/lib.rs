@@ -2,8 +2,8 @@
 //! `horizon-luckperms-core` crate (copied to `core/`); this file maps the glue points of the
 //! horizon-rust port (`glue/*.rs`, `horizon-mixin.toml`) onto arismoko's hooks and host methods.
 //! Everything arismoko lacks is a `TODO(arismoko-api: <name>)`; see PORT_NOTES.md.
-//! Permission nodes: HMOD-GAP(handler). This mod is no longer a permission provider on Horizon main
-//! (see the note above `impl Hooks`); the handler port is not done in this round.
+//! Permission provider: this mod gathers the handler `HANDLER_ID`; the server answers node queries
+//! from LuckPerms once `permission-handler=luckperms:permissions` is set in server.properties.
 
 pub mod horizon_luckperms_core;
 use crate::horizon_luckperms_core::command::ROOTS;
@@ -12,8 +12,9 @@ use crate::horizon_luckperms_core::runtime::OnlinePlayer;
 use crate::horizon_luckperms_core::text as lp_text;
 use crate::horizon_luckperms_core::Recipient;
 use mod_api::{
-    Command, CommandArgumentValue, CommandSource, Flow, Hooks, PlayerCommandEvent,
-    PlayerCommandsSentEvent, PlayerLoggedInEvent, PlayerLoggedOutEvent, PlayerLoginEvent,
+    Command, CommandArgumentValue, CommandSource, Flow, Hooks, PermissionError,
+    PermissionGatherHandlerEvent, PermissionHandlerQueryEvent, PermissionValue, PermissionValueType,
+    PlayerCommandEvent, PlayerCommandsSentEvent, PlayerLoggedInEvent, PlayerLoggedOutEvent, PlayerLoginEvent,
     RegisterCommandsEvent, RunModCommandEvent, ServerAboutToStartEvent,
     ServerHost, ServerStoppingEvent, ServerTickEvent, ServerTickPhase, Suggestion, TabCompleteEvent,
     Text,
@@ -75,6 +76,9 @@ fn settle_logins(host: &mut dyn ServerHost) {
         }
     }
 }
+
+/// The id of the permission handler this mod provides (`permission-handler` in server.properties).
+const HANDLER_ID: &str = "luckperms:permissions";
 
 #[derive(Default)]
 struct Mod;
@@ -291,12 +295,15 @@ impl Hooks for Mod {
         }
     }
 
-    fn run_mod_command(&self, _: &mut dyn ServerHost, event: &mut RunModCommandEvent<'_>) -> Flow {
-        // A player's /lp is taken whole in player_command. Here: the console. Command blocks and functions
-        // are not handled (the port did not handle them either).
-        if !matches!(event.source, CommandSource::Console { .. }) {
-            return Flow::Continue;
-        }
+    fn run_mod_command(&self, host: &mut dyn ServerHost, event: &mut RunModCommandEvent<'_>) -> Flow {
+        // A player's typed /lp is taken whole in player_command. Here: the console and every other source
+        // (command blocks, functions, `execute as`); a player source is that player.
+        let sender = match event.source {
+            CommandSource::Player { player, .. } => {
+                Some((player.uuid(), player.name(host).unwrap_or_default()))
+            }
+            _ => None,
+        };
         let Some(root) = event.command.literals.first() else {
             return Flow::Continue;
         };
@@ -305,7 +312,11 @@ impl Hooks for Mod {
             _ => "",
         };
         let line = if rest.is_empty() { root.clone() } else { format!("{root} {rest}") };
-        if glue::lp_command(None, &line) { Flow::Cancel } else { Flow::Continue }
+        let sent = match &sender {
+            Some((uuid, name)) => glue::lp_command(Some((*uuid, name.as_str())), &line),
+            None => glue::lp_command(None, &line),
+        };
+        if sent { Flow::Cancel } else { Flow::Continue }
     }
 
     fn player_command(&self, host: &mut dyn ServerHost, event: &mut PlayerCommandEvent<'_>) -> Flow {
@@ -339,11 +350,33 @@ impl Hooks for Mod {
         glue::filter_tree(event.player, event.names);
     }
 
-    // HMOD-GAP(handler): Horizon main has no per-node provider hook. The port must become the selected
-    // permission handler: `permission_gather_handler` pushes an id, `permission_handler_query` answers
-    // each node with `glue::permission(uuid, name)` as a Boolean value (None must become an explicit
-    // error or a computed default, never a grant), and the server needs `permission-handler` set to that
-    // id. Lost meanwhile: LuckPerms no longer answers node checks (`glue::permission` is unused here).
+    fn permission_gather_handler(&self, _: &mut dyn ServerHost, event: &mut PermissionGatherHandlerEvent<'_>) {
+        event.handlers.push(HANDLER_ID.to_owned());
+    }
+
+    fn permission_handler_query(
+        &self,
+        host: &mut dyn ServerHost,
+        event: &mut PermissionHandlerQueryEvent<'_>,
+    ) -> Option<Result<PermissionValue, PermissionError>> {
+        if event.handler != HANDLER_ID {
+            return None;
+        }
+        if event.node.value_type != PermissionValueType::Boolean {
+            return Some(Err(PermissionError::WrongType));
+        }
+        // Answered from the core's cache, never from the database: the server thread does not wait.
+        let level = event
+            .online
+            .and_then(|u| host.player(u))
+            .and_then(|p| p.permission_level(&*host))
+            .unwrap_or(0);
+        Some(match glue::handler_answer(event.uuid, &event.node.name, event.online.is_some(), level) {
+            Some(b) => Ok(PermissionValue::Boolean(b)),
+            None if event.online.is_some() => Err(PermissionError::NotInitialized),
+            None => Err(PermissionError::UnknownPlayer),
+        })
+    }
 
     fn tab_complete(&self, _: &mut dyn ServerHost, event: &mut TabCompleteEvent<'_>) {
         let Some((start, words)) = glue::complete(event.player, event.name, event.command) else {

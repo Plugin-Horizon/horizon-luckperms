@@ -14,3 +14,14 @@ Round 1
 - Unsure:
   - The `kick` to `disconnect` rename is a direct API rename. `disconnect` returns `Result<bool, TextFormError>`; the result is ignored as before.
   - Warnings about `cfg` value `net` in `bytebin.rs` and `command/editor.rs` remain (warnings only, not touched).
+
+Round 2 (parity fixes)
+- Fixed: the HMOD-GAP(handler) is closed. `permission_gather_handler` pushes `luckperms:permissions`;
+  `permission_handler_query` answers Boolean nodes from `glue::handler_answer` (LuckPerms decision, else the operator
+  check for online players; offline UUID -> `UnknownPlayer`; non-Boolean -> `WrongType`). Activate it with
+  `permission-handler=luckperms:permissions` in server.properties.
+- Fixed: the default config used `method = "memory"` (data lost at restart); it is `mariadb` again, memory logs a warning.
+- Fixed: `/lp` from command blocks, functions and `execute as` is handled (`run_mod_command`).
+- Gaps still open: granted vanilla commands, other storage backends, verbose/tree/bulkupdate, login refusal (5 s grace).
+- Unsure: a node declared by another mod for everyone (level 0) is denied to non-ops without an explicit
+  LuckPerms grant, because the handler cannot read the node's declared default.

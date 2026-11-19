@@ -52,7 +52,7 @@ does not exist yet (the Known gaps section). Until then `grant-via-execute = tru
 ## Config
 
 `config/luckperms.toml`, written with defaults on first start (the server then waits for the database password).
-Keys follow LuckPerms' `config.yml`; see `core/luckperms.example.toml`. Saving the file reloads it within a
+Keys follow LuckPerms' `config.yml`; see `data/luckperms/luckperms.example.toml`. Saving the file reloads it within a
 second; storage settings need a restart. To share data with existing LuckPerms servers use the same database,
 `table-prefix` and `messaging-service`, and give this server the `server` name its contexts should use.
 
@@ -84,6 +84,14 @@ horizon-launcher native-build <path to this folder> --server-output <dir> --vers
 ```
 
 `--trust-native-code` is your consent to compile and run this code inside the server. The logic crate tests run without the engine: `(cd core && cargo test)`.
+
+## Permission handler
+
+This mod provides the permission handler `luckperms:permissions`. Set `permission-handler=luckperms:permissions` in
+`server.properties` so every mod's node queries are answered from LuckPerms; without it the built-in handler
+answers from node defaults and `/lp` only edits the database. Nodes with no LuckPerms rule fall back to the
+operator check (`op-level`, `enable-ops`) for online players; a node declared for everyone (level 0) by another mod
+therefore needs an explicit grant on the `default` group. Offline UUIDs are refused (`UnknownPlayer`), never granted.
 
 ## Known gaps
 

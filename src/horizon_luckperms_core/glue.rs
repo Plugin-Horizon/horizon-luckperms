@@ -116,7 +116,10 @@ pub fn start(config_dir: &Path, level_name: &str) {
 
 fn open_storage(cfg: &Config) -> Result<Box<dyn Storage>, String> {
     match cfg.storage.method.to_lowercase().as_str() {
-        "memory" => Ok(Box::new(MemoryStorage::default())),
+        "memory" => {
+            log("WARNING: storage method memory keeps everything in RAM; all data is lost at restart");
+            Ok(Box::new(MemoryStorage::default()))
+        }
         "mariadb" | "mysql" => {
             if cfg.storage.password.is_empty() {
                 return Err("storage.password is empty (fill it in, or use method = \"memory\" for a lone test server)".into());
@@ -198,6 +201,25 @@ pub fn tick(players: Option<Vec<OnlinePlayer>>) -> TickOut {
 pub fn permission(player: u128, node: &str) -> Option<bool> {
     crate::horizon_luckperms_core::known::record(node);
     runtime::get()?.check(player, node).as_bool()
+}
+
+/// What the permission handler answers when LuckPerms has no opinion: an online player is "op" (`enable-ops`
+/// and the configured level) or not; an offline player has no answer. A handler must never leave a query
+/// unanswered (that is a failure), so `None` here becomes an error, never a grant.
+pub fn handler_default(decision: Option<bool>, online: bool, is_op: bool) -> Option<bool> {
+    match decision {
+        Some(b) => Some(b),
+        None if online => Some(is_op),
+        None => None,
+    }
+}
+
+/// The permission handler's answer for a Boolean node: LuckPerms' own decision, else the default for an
+/// online player of operator level `level` (`None`: not started, or an offline player).
+pub fn handler_answer(player: u128, node: &str, online: bool, level: u8) -> Option<bool> {
+    let rt = runtime::get()?;
+    crate::horizon_luckperms_core::known::record(node);
+    handler_default(rt.check(player, node).as_bool(), online, rt.is_op(level))
 }
 
 /// The level a granted command runs at: a node set true lifts the player to the level the
@@ -376,6 +398,15 @@ mod tests {
         assert_eq!(names, vec!["help", "gamemode"]);
         move_granted(&mut names, &hidden, |r| (r == "gamemode").then_some(true));
         assert_eq!(names.len(), 2, "no duplicates");
+    }
+
+    #[test]
+    fn handler_default_never_leaves_a_query_open() {
+        assert_eq!(handler_default(Some(false), true, true), Some(false), "an explicit deny beats op");
+        assert_eq!(handler_default(Some(true), false, false), Some(true));
+        assert_eq!(handler_default(None, true, true), Some(true));
+        assert_eq!(handler_default(None, true, false), Some(false));
+        assert_eq!(handler_default(None, false, true), None, "offline: no answer, the handler errors");
     }
 
     #[test]
