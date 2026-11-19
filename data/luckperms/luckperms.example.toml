@@ -44,8 +44,9 @@ web-editor-url = "https://luckperms.net/editor/"
 
 
 [storage]
-# "mariadb" or "mysql"; "memory" keeps everything in RAM (testing only, nothing is shared).
-method = "memory"
+# "mariadb" or "mysql" (the service starts once the password below is filled in); "memory" keeps everything
+# in RAM and loses it at every restart (testing only, nothing is shared).
+method = "mariadb"
 address = "localhost:3306"
 database = "minecraft"
 username = "minecraft"
