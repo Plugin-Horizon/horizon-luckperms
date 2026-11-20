@@ -3,6 +3,7 @@
 //! Runs on the worker thread (it may load offline users and always saves).
 
 mod args;
+pub(crate) mod backup;
 mod editor;
 mod extra;
 mod fmt;
@@ -501,6 +502,8 @@ fn run(c: &mut Ctx<'_>, mut a: Vec<String>) {
         "verbose" => extra::verbose(c, args),
         "tree" => extra::tree(c, args),
         "bulkupdate" => extra::bulkupdate(c, args),
+        "import" => backup::import(c, args),
+        "export" => backup::export(c, args),
         "editor" => editor::editor(c, args),
         "applyedits" => editor::apply_edits(c, args),
         "trusteditor" => editor::trust_editor(c, args),

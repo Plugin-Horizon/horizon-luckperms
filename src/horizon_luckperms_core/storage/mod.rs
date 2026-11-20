@@ -115,6 +115,18 @@ pub trait Storage: Send {
     /// The newest actions first, at most `limit`, optionally for one target.
     fn actions(&mut self, limit: usize, target: Option<(TargetType, &str)>) -> Result<Vec<Action>>;
     fn search(&mut self, key: &KeyMatch) -> Result<Vec<(HolderKey, Node)>>;
+    /// Every uuid with data, sorted (`Storage.getUniqueUsers`): the players table and every user
+    /// with a node. The default reads the node rows; the SQL storage also reads the players table.
+    fn unique_users(&mut self) -> Result<Vec<u128>> {
+        let mut ids: Vec<u128> = self
+            .search(&KeyMatch::Like("%".into()))?
+            .into_iter()
+            .filter_map(|(h, _)| if let HolderKey::User(u) = h { Some(u) } else { None })
+            .collect();
+        ids.sort_unstable();
+        ids.dedup();
+        Ok(ids)
+    }
     /// Every action matching `filter`, newest first (`getLogPage` without the paging).
     fn log_entries(&mut self, filter: &ActionFilter) -> Result<Vec<Action>> {
         const ALL: usize = 10_000_000;

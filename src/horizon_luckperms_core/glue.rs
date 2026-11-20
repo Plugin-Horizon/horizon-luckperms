@@ -78,6 +78,7 @@ fn load(src: &Source) -> Result<Config, String> {
 /// nothing is written there). Otherwise `config/luckperms.toml` is read, and written with the defaults and an
 /// empty password when missing; the service then starts only once the password is filled in.
 pub fn start(config_dir: &Path, level_name: &str) {
+    crate::horizon_luckperms_core::command::backup::set_data_dir(config_dir);
     let src = if Path::new(ORIGINAL_DIR).join(CONFIG_YML).exists() {
         Source::Original { dir: PathBuf::from(ORIGINAL_DIR) }
     } else {

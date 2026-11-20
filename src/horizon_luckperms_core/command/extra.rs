@@ -31,7 +31,7 @@ fn link(c: &mut Ctx<'_>, heading: &str, url: &str) {
 }
 
 /// Gzips `json` and posts it to bytebin; the key, or the failure told to the sender.
-fn upload(c: &mut Ctx<'_>, json: String) -> Option<String> {
+pub(super) fn upload(c: &mut Ctx<'_>, json: String) -> Option<String> {
     #[cfg(feature = "net")]
     let body = bytebin::gzip(json.as_bytes());
     #[cfg(not(feature = "net"))]

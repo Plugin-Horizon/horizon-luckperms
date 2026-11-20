@@ -419,6 +419,20 @@ impl Storage for SqlStorage {
         Ok(out)
     }
 
+    fn unique_users(&mut self) -> Result<Vec<u128>> {
+        let mut c = self.conn()?;
+        let rows: Vec<(String,)> = c
+            .exec(
+                self.q("SELECT `uuid` FROM `{prefix}players` UNION SELECT `uuid` FROM `{prefix}user_permissions`"),
+                (),
+            )
+            .map_err(err)?;
+        let mut ids: Vec<u128> = rows.into_iter().filter_map(|(u,)| crate::horizon_luckperms_core::uuid::parse(&u)).collect();
+        ids.sort_unstable();
+        ids.dedup();
+        Ok(ids)
+    }
+
     fn messenger_init(&mut self) -> Result<i64> {
         let mut c = self.conn()?;
         let table = format!("{}messenger", self.prefix);
