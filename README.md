@@ -80,9 +80,22 @@ no socket. Network calls run on the mod's worker thread (15 s timeout), never th
   console only, confirmed with `/lp bulkupdate confirm <id>` unless `skip-bulkupdate-confirmation` is set; `disable-bulkupdate`
   turns it off. It runs over the groups in memory and the users found in storage and saves each holder that changed.
 
+## Export and import
+
+- `/lp export [file] [--without-users] [--without-groups]`: writes LuckPerms' export document (gzip JSON: `metadata`, `groups`,
+  `tracks`, `users`) to `config/luckperms/<file>.json.gz` (default `luckperms-yyyy-MM-dd-HH-mm.json.gz`, UTC). An existing file is
+  not overwritten. `--upload` posts the document to bytebin and prints the code, as the web editor does.
+- `/lp import <file> [--replace]` reads such a file from the same directory (the `.json.gz` ending may be left out). Groups and
+  tracks are created when missing; users get their username and primary group. Without `--replace` the nodes are merged, with it
+  each holder's nodes are replaced. `/lp import <code> --upload` reads a bytebin upload, including the web editor's reply.
+- Only direct children of the data directory are used. Import nodes that already expired are dropped; malformed nodes are
+  counted and reported, not applied.
+- The file is written in the server's UTC clock and without the progress lines of LuckPerms' background threads (the work runs
+  on the mod's worker thread in one go).
+
 ## Not ported
 
-`import`, `export` and `translations` are listed like in LuckPerms and answer that they are not available on Horizon.
+`translations` is listed like in LuckPerms and answers that it is not available on Horizon.
 Also not ported: storage types other than MariaDB/MySQL (and `memory`), messaging other than SQL, Bukkit child permissions,
 Vault and the PlaceholderAPI expansion. Details in the Known gaps section.
 
@@ -110,6 +123,15 @@ What does not work yet on arismoko/horizon (each is marked `TODO(arismoko-api: .
 
 - A granted vanilla command (`minecraft.command.<name>`) is lifted to run for a non-operator, but the command tree of a non-operator still hides that root.
 - A login waits up to `horizon.login-wait-ms` (default 3000) for the player's data and is refused with a reason when the load fails or is late. With `0` the older behaviour returns: the player is let in with `default` rights and kicked after 5 seconds on failure. Neither path was exercised with a real database.
+- `/lp verbose command` (the `verbose.command.others` node) needs running a command as a player and waiting for it: no engine call yet (GAPS_UPSTREAM).
+- Storage types h2, sqlite, postgresql, mongodb, yaml, json, hocon, yaml-combined and split storage are refused at start; only MariaDB/MySQL and `memory` run.
+- Messaging other than the SQL messenger (redis, nats, rabbitmq, pluginmsg) is refused; `messaging-service` must be `sql` or `auto` for an SQL network.
+- `/lp translations` (listing and `install`) is not ported: the messages are English only.
+- `require-sender-group-membership-to-modify` is read but not enforced: a sender may change a group they are not in.
+- `argument-based-command-permissions`, `meta-value-selection` (and `meta-value-selection-default` other than `inheritance`), `apply-default-negated-permissions-before-wildcards`, `resolve-command-selectors`, `auto-op` (Bukkit's op flag does not exist here) are read and refused or noted at start, not applied.
+- `apply-bukkit-default-permissions` and Bukkit child permissions (`plugin.yml` `children`): a declared node has no children on Horizon.
+- Vault, the PlaceholderAPI expansion and the live web-editor socket (bytesocks; `/lp editor` gives the `applyedits` command instead) are not ported.
+- The handler's answer for a node with no LuckPerms rule uses the node's declared default only with the cargo feature `horizon_handler_default` (needs horizon-rust/horizon#18755) and the `Nobody` default needs horizon-rust/horizon#18754.
 
 ## Licence and origin
 

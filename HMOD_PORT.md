@@ -1,4 +1,44 @@
-Parity: before ~70% -> after ~73% (~343/~470 items; method: audit + PARITY.md estimate; items = commands and sub commands, nodes, config keys, messages, features; an item behind an off-by-default feature or a missing engine API counts as not done)
+Parity: 76% now / 77% with our PRs / 77% with engine changes / 77% with new SDK (~358/~470 items; estimate from the round 3 count plus this round; items = commands and sub commands, nodes, config keys, messages, features; an item behind an off-by-default feature or a missing engine API counts as not done)
+
+## Round 100 (blind, not compiled): checklist and closed items
+Closed this round: `/lp export` (file, `--without-users`, `--without-groups`, `--upload`), `/lp import` (file, `--replace`,
+`--upload`, the web editor's reply), the export/import messages, `unique_users` in storage (players table plus node rows),
+config keys `allow-invalid-usernames` (was read nowhere), `context-satisfy-mode`, `disabled-context-calculators`, `debug-logins`.
+Messenger-only credential keys (`redis.*`, `nats.*`, `rabbitmq.*` user, password, token) listed in `IGNORED` with the reason.
+
+Checklist round 100 (ticked = matches the original; the Paper side is `common/.../commands` and `luckperms_en.properties`):
+- [x] Commands, 24 Paper commands: user, group, track, log, sync, info, editor, search, networksync, reloadconfig, bulkupdate, tree,
+      creategroup, deletegroup, listgroups, createtrack, deletetrack, listtracks, export, import (`specs.rs` has the 24 Paper usage
+      lines of `lp_specs.txt`; its Sponge spec is there too, unused).
+- [~] verbose: on/record/off/upload/paste and filters yes; `verbose command` answers "not available" (no engine call, GAPS_UPSTREAM).
+- [~] trusteditor and applyedits: the reply and the apply work; the live editor socket (bytesocks) is not ported.
+- [ ] translations: listing and `install` not ported (English only; the install messages exist in `lang.rs` but nothing uses them).
+- [x] Sponge `sponge*` commands and `option.*` nodes: Sponge only, not applicable (not counted).
+- [x] Permission nodes: 126 Paper nodes; 125 are checked by the port. [ ] `verbose.command.others` (with `verbose command`).
+- [x] Config keys: each of the 101 keys of Bukkit `config.yml` is read or listed in `IGNORED` (script check; the
+      `vault-*`, `redis`/`nats`/`rabbitmq`/`mongodb`/`split-storage` keys are refused or ignored). About 60 are acted on; 31 are read and ignored (`IGNORED`); about 10
+      are noted at start and not applied (`unsupported`, see Known gaps).
+- [x] Messages: all command, usage (279/279), log, duration, login and command-system texts are in `lang.rs` (the `''` of the
+      properties file is one `'` there; 343/343 command texts, 26 of them differ only by that).
+- [x] Behaviour: login load (refusal with reason, grace window), logout and the housekeeper unload (`debug-logins`), permission
+      handler (Boolean answers, operator fallback, offline UUIDs refused), command gate, tab completion, contexts (server, world,
+      dimension-type, gamemode, static; calculators by name), SQL messaging, verbose recording at the handler, bulkupdate and
+      export/import on the worker thread.
+- [ ] Storage types other than MariaDB/MySQL and `memory` (h2, sqlite, postgresql, mongodb, yaml, json, hocon, yaml-combined,
+      split storage): refused at start. Library work, no engine API.
+- [ ] Messaging redis, nats, rabbitmq, pluginmsg: refused. Library work, no engine API.
+- [ ] `require-sender-group-membership-to-modify`: read, not enforced (about a dozen group-changing commands need the check).
+- [ ] `argument-based-command-permissions`, `meta-value-selection`, `apply-default-negated-permissions-before-wildcards`,
+      `resolve-command-selectors`, `auto-op`: read, refused or noted, not applied.
+- [ ] Bukkit child and default permissions (`plugin.yml` children and `default`): no node children on Horizon.
+- [ ] Granted vanilla commands for non-operators (`minecraft.command.<name>` true): API-blocked (GAPS_UPSTREAM, new line).
+- [ ] Handler default and `Nobody`: behind `horizon_handler_default` (off) and the PRs horizon-rust/horizon#18755 and #18754.
+- [ ] Vault, the PlaceholderAPI expansion, the LuckPerms API for other mods: not ported.
+
+API-blocked items with a branch or PR: #18754 (`Nobody`) and #18755 (declared default to the handler) (+2 with our PRs).
+API-blocked items without one: verbose command (`run_command_as_player_sync`), granted vanilla commands (new GAPS line).
+Not compiled: this round is blind; the next compile round has to run `cargo test` in `core/` and the unit tests in
+`command/backup.rs` (time and JSON), `original.rs` (the new keys) and `command/tests.rs`.
 
 ## Round 3 (blind, not compiled)
 - Added `/lp verbose` (on, record, off, upload; filter expressions; rate limit; bytebin upload) in `verbose.rs` + `command/extra.rs`,
