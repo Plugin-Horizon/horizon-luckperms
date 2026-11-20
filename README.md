@@ -1,5 +1,9 @@
 # horizon-luckperms
 
+## Port status
+
+Compared with LuckPerms b878ae9 (master): **76 %** of the original's commands, permissions, config keys, messages and features work today; **77 %** once our open Horizon PRs are merged; **77 %** with the engine changes we are writing; **77 %** with the newest Horizon SDK. Counted on about 358/470 items (see HMOD_PORT.md). Status: not yet compiled after the 2026-11-20 round.
+
 > **Unofficial Rust port of LuckPerms for the Horizon server (https://github.com/arismoko/horizon). Not affiliated with or endorsed by the LuckPerms authors.**
 
 LuckPerms-compatible permissions for [Horizon](https://github.com/arismoko/horizon) servers, as a native mod.
