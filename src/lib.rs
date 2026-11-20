@@ -2,17 +2,20 @@
 //! `horizon-luckperms-core` crate (copied to `core/`); this file maps the glue points of the
 //! horizon-rust port (`glue/*.rs`, `horizon-mixin.toml`) onto arismoko's hooks and host methods.
 //! Everything arismoko lacks is a `TODO(arismoko-api: <name>)`; see PORT_NOTES.md.
-//! Permission nodes: this mod is the provider (`player_permission_check`), so every mod's
-//! `player.has_permission` asks LuckPerms first.
-use horizon_luckperms_core::command::ROOTS;
-use horizon_luckperms_core::glue::{self, Gate};
-use horizon_luckperms_core::runtime::OnlinePlayer;
-use horizon_luckperms_core::text as lp_text;
-use horizon_luckperms_core::Recipient;
+//! Permission provider: this mod gathers the handler `HANDLER_ID`; the server answers node queries
+//! from LuckPerms once `permission-handler=luckperms:permissions` is set in server.properties.
+
+pub mod horizon_luckperms_core;
+use crate::horizon_luckperms_core::command::ROOTS;
+use crate::horizon_luckperms_core::glue::{self, Gate};
+use crate::horizon_luckperms_core::runtime::OnlinePlayer;
+use crate::horizon_luckperms_core::text as lp_text;
+use crate::horizon_luckperms_core::Recipient;
 use mod_api::{
-    Command, CommandArgumentValue, CommandSource, Flow, Host, Hooks, PlayerCommandEvent,
-    PlayerCommandsSentEvent, PlayerLoggedInEvent, PlayerLoggedOutEvent, PlayerLoginEvent,
-    PlayerPermissionCheckEvent, RegisterCommandsEvent, RunModCommandEvent, ServerAboutToStartEvent,
+    Command, CommandArgumentValue, CommandSource, Flow, Hooks, PermissionError,
+    PermissionGatherHandlerEvent, PermissionHandlerQueryEvent, PermissionValue, PermissionValueType,
+    PlayerCommandEvent, PlayerCommandsSentEvent, PlayerLoggedInEvent, PlayerLoggedOutEvent, PlayerLoginEvent,
+    RegisterCommandsEvent, RunModCommandEvent, ServerAboutToStartEvent,
     ServerHost, ServerStoppingEvent, ServerTickEvent, ServerTickPhase, Suggestion, TabCompleteEvent,
     Text,
 };
@@ -69,10 +72,13 @@ fn settle_logins(host: &mut dyn ServerHost) {
         // The reason shown to the player stays generic: the error text can name the database.
         eprintln!("[LuckPerms] data of {name} not loaded, player kicked: {failure}");
         if let Some(p) = host.player(uuid) {
-            let _ = p.kick(host, Text::literal("LuckPerms could not load your data, please try again."));
+            let _ = p.disconnect(host, Text::literal("LuckPerms could not load your data, please try again."));
         }
     }
 }
+
+/// The id of the permission handler this mod provides (`permission-handler` in server.properties).
+const HANDLER_ID: &str = "luckperms:permissions";
 
 #[derive(Default)]
 struct Mod;
@@ -241,6 +247,26 @@ impl Hooks for Mod {
     }
 
     fn player_login(&self, _: &mut dyn ServerHost, event: &mut PlayerLoginEvent<'_>) -> Flow {
+        // Like Paper's AsyncPlayerPreLoginEvent, a failed load refuses the connection: wait (bounded) for the
+        // worker's answer. `horizon.login-wait-ms = 0` keeps the older grace window below.
+        let wait = glue::login_wait_ms();
+        if wait > 0 {
+            let (tx, rx) = std::sync::mpsc::channel();
+            let queued = glue::pre_login(event.player, event.name, move |answer| {
+                let _ = tx.send(answer);
+            });
+            if !queued {
+                return Flow::Continue;
+            }
+            let refusal = match rx.recv_timeout(Duration::from_millis(wait)) {
+                Ok(Ok(())) => return Flow::Continue,
+                Ok(Err(reason)) => reason,
+                Err(_) => format!("no answer within {wait} ms"),
+            };
+            eprintln!("[LuckPerms] login of {} refused, data not loaded: {refusal}", event.name);
+            *event.reason = Some(Text::literal(crate::horizon_luckperms_core::runtime::PRE_LOGIN_REFUSAL));
+            return Flow::Cancel;
+        }
         // Paper loads the data in AsyncPlayerPreLoginEvent and refuses on failure. `player_login` runs on
         // the server thread, so it must not wait: the load starts on the worker, the player is let on (and
         // resolves as `default` only until the data is there), and `server_tick` kicks them when the load
@@ -289,12 +315,15 @@ impl Hooks for Mod {
         }
     }
 
-    fn run_mod_command(&self, _: &mut dyn ServerHost, event: &mut RunModCommandEvent<'_>) -> Flow {
-        // A player's /lp is taken whole in player_command. Here: the console. Command blocks and functions
-        // are not handled (the port did not handle them either).
-        if !matches!(event.source, CommandSource::Console { .. }) {
-            return Flow::Continue;
-        }
+    fn run_mod_command(&self, host: &mut dyn ServerHost, event: &mut RunModCommandEvent<'_>) -> Flow {
+        // A player's typed /lp is taken whole in player_command. Here: the console and every other source
+        // (command blocks, functions, `execute as`); a player source is that player.
+        let sender = match event.source {
+            CommandSource::Player { player, .. } => {
+                Some((player.uuid(), player.name(host).unwrap_or_default()))
+            }
+            _ => None,
+        };
         let Some(root) = event.command.literals.first() else {
             return Flow::Continue;
         };
@@ -303,7 +332,11 @@ impl Hooks for Mod {
             _ => "",
         };
         let line = if rest.is_empty() { root.clone() } else { format!("{root} {rest}") };
-        if glue::lp_command(None, &line) { Flow::Cancel } else { Flow::Continue }
+        let sent = match &sender {
+            Some((uuid, name)) => glue::lp_command(Some((*uuid, name.as_str())), &line),
+            None => glue::lp_command(None, &line),
+        };
+        if sent { Flow::Cancel } else { Flow::Continue }
     }
 
     fn player_command(&self, host: &mut dyn ServerHost, event: &mut PlayerCommandEvent<'_>) -> Flow {
@@ -337,10 +370,46 @@ impl Hooks for Mod {
         glue::filter_tree(event.player, event.names);
     }
 
-    /// The permission provider: LuckPerms' answer for a node of a player on this server. `None`
-    /// leaves the decision to the next provider or the operator level (`player.has_permission`).
-    fn player_permission_check(&self, _: &dyn Host, event: &mut PlayerPermissionCheckEvent<'_>) -> Option<bool> {
-        glue::permission(event.player, event.node)
+    fn permission_gather_handler(&self, _: &mut dyn ServerHost, event: &mut PermissionGatherHandlerEvent<'_>) {
+        event.handlers.push(HANDLER_ID.to_owned());
+    }
+
+    fn permission_handler_query(
+        &self,
+        host: &mut dyn ServerHost,
+        event: &mut PermissionHandlerQueryEvent<'_>,
+    ) -> Option<Result<PermissionValue, PermissionError>> {
+        if event.handler != HANDLER_ID {
+            return None;
+        }
+        if event.node.value_type != PermissionValueType::Boolean {
+            return Some(Err(PermissionError::WrongType));
+        }
+        // Answered from the core's cache, never from the database: the server thread does not wait.
+        let level = event
+            .online
+            .and_then(|u| host.player(u))
+            .and_then(|p| p.permission_level(&*host))
+            .unwrap_or(0);
+        // With the engine's declared default (feature `horizon_handler_default`), a node nobody set falls back to
+        // what the mod that owns it declared, as Paper falls back to plugin.yml.
+        #[cfg(feature = "horizon_handler_default")]
+        let answer = {
+            let declared = match event.default {
+                mod_api::NodeDefault::Level(l) => glue::DeclaredDefault::Level(l.level()),
+                mod_api::NodeDefault::Value(mod_api::PermissionValue::Boolean(true)) => glue::DeclaredDefault::Everyone,
+                mod_api::NodeDefault::Value(_) => glue::DeclaredDefault::Nobody,
+                _ => glue::DeclaredDefault::Level(1),
+            };
+            glue::handler_answer_declared(event.uuid, &event.node.name, event.online.is_some(), level, declared)
+        };
+        #[cfg(not(feature = "horizon_handler_default"))]
+        let answer = glue::handler_answer(event.uuid, &event.node.name, event.online.is_some(), level);
+        Some(match answer {
+            Some(b) => Ok(PermissionValue::Boolean(b)),
+            None if event.online.is_some() => Err(PermissionError::NotInitialized),
+            None => Err(PermissionError::UnknownPlayer),
+        })
     }
 
     fn tab_complete(&self, _: &mut dyn ServerHost, event: &mut TabCompleteEvent<'_>) {
