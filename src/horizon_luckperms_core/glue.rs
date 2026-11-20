@@ -219,7 +219,53 @@ pub fn handler_default(decision: Option<bool>, online: bool, is_op: bool) -> Opt
 pub fn handler_answer(player: u128, node: &str, online: bool, level: u8) -> Option<bool> {
     let rt = runtime::get()?;
     crate::horizon_luckperms_core::known::record(node);
-    handler_default(rt.check(player, node).as_bool(), online, rt.is_op(level))
+    let decision = rt.check(player, node).as_bool();
+    let answer = handler_default(decision, online, rt.is_op(level));
+    crate::horizon_luckperms_core::verbose::record(&rt, player, rt.online_player(player).map(|p| p.name), node, decision);
+    answer
+}
+
+/// What a mod declared as a node's default (Paper's plugin.yml `default:`), as the handler sees it with the
+/// engine feature `horizon_handler_default` (horizon-rust/horizon #18755).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DeclaredDefault {
+    /// Granted to every player.
+    Everyone,
+    /// Granted to nobody, operators included.
+    Nobody,
+    /// Granted to operators of at least this level.
+    Level(u8),
+}
+
+/// The handler's answer when the node's declared default is known: LuckPerms' decision, else the declared default
+/// (`apply-bukkit-default-permissions` off: operators only, as without a declaration). `None` for an offline player
+/// without a decision.
+pub fn handler_answer_declared(player: u128, node: &str, online: bool, level: u8, declared: DeclaredDefault) -> Option<bool> {
+    let rt = runtime::get()?;
+    crate::horizon_luckperms_core::known::record(node);
+    let decision = rt.check(player, node).as_bool();
+    let answer = declared_answer(decision, online, rt.is_op(level), level, declared, rt.config().apply_bukkit_default_permissions);
+    crate::horizon_luckperms_core::verbose::record(&rt, player, rt.online_player(player).map(|p| p.name), node, decision);
+    answer
+}
+
+/// The pure part of [`handler_answer_declared`].
+pub fn declared_answer(decision: Option<bool>, online: bool, is_op: bool, level: u8, declared: DeclaredDefault, apply_defaults: bool) -> Option<bool> {
+    if decision.is_some() {
+        return decision;
+    }
+    if !online {
+        return None;
+    }
+    if !apply_defaults {
+        return Some(is_op);
+    }
+    Some(match declared {
+        DeclaredDefault::Everyone => true,
+        DeclaredDefault::Nobody => false,
+        DeclaredDefault::Level(0) => true,
+        DeclaredDefault::Level(l) => is_op && level >= l,
+    })
 }
 
 /// The level a granted command runs at: a node set true lifts the player to the level the
@@ -267,6 +313,11 @@ pub fn pre_login(player: u128, name: &str, done: impl FnOnce(Result<(), String>)
         Some(rt) => rt.pre_login(player, name, Box::new(done)),
         None => false,
     }
+}
+
+/// Milliseconds a login waits for the player's data (`horizon.login-wait-ms`); 0 when no service runs.
+pub fn login_wait_ms() -> u64 {
+    runtime::get().map_or(0, |rt| rt.config().horizon.login_wait_ms)
 }
 
 pub fn players(players: Vec<OnlinePlayer>) {
@@ -460,3 +511,34 @@ mod source_tests {
     }
 }
 
+#[cfg(test)]
+mod declared_default_tests {
+    use super::*;
+
+    #[test]
+    fn a_decision_wins_over_the_declared_default() {
+        assert_eq!(declared_answer(Some(false), true, true, 4, DeclaredDefault::Everyone, true), Some(false));
+        assert_eq!(declared_answer(Some(true), true, false, 0, DeclaredDefault::Nobody, true), Some(true));
+    }
+
+    #[test]
+    fn without_a_decision_the_declared_default_decides() {
+        assert_eq!(declared_answer(None, true, false, 0, DeclaredDefault::Everyone, true), Some(true));
+        assert_eq!(declared_answer(None, true, true, 4, DeclaredDefault::Nobody, true), Some(false));
+        assert_eq!(declared_answer(None, true, false, 0, DeclaredDefault::Level(0), true), Some(true));
+        assert_eq!(declared_answer(None, true, false, 0, DeclaredDefault::Level(2), true), Some(false));
+        assert_eq!(declared_answer(None, true, true, 1, DeclaredDefault::Level(2), true), Some(false));
+        assert_eq!(declared_answer(None, true, true, 2, DeclaredDefault::Level(2), true), Some(true));
+    }
+
+    #[test]
+    fn an_offline_player_without_a_decision_has_no_answer() {
+        assert_eq!(declared_answer(None, false, false, 0, DeclaredDefault::Everyone, true), None);
+    }
+
+    #[test]
+    fn with_bukkit_defaults_off_only_operators_pass() {
+        assert_eq!(declared_answer(None, true, false, 0, DeclaredDefault::Everyone, false), Some(false));
+        assert_eq!(declared_answer(None, true, true, 4, DeclaredDefault::Nobody, false), Some(true));
+    }
+}

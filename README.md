@@ -66,14 +66,25 @@ uploaded, never IP addresses (an upload whose data looks like an IP address is r
 is not ported, so the editor shows the `/lp applyedits <code>` command to copy; `/lp trusteditor` answers that there is
 no socket. Network calls run on the mod's worker thread (15 s timeout), never the tick.
 
+## Verbose, tree, bulk update
+
+- `/lp verbose on|record [filter]`, `off`, `upload|paste`: records the node checks the permission handler answers. The filter is
+  LuckPerms' expression (`user`, a permission prefix, `true`/`false`/`undefined`, with `&`, `|`, `!` and brackets). Notifications
+  go to the sender (50 a second for a player, 100 for the console); `upload` posts the results to bytebin and prints the link
+  to `verbose-viewer-url`. There are no stack traces on Horizon. `verbose command` is not available. Only checks that reach the
+  handler are seen, so set `permission-handler=luckperms:permissions`.
+- `/lp tree [scope] [player]`: the tree of the known nodes (vanilla command nodes, `command-nodes`, LuckPerms' own and every node
+  a mod asked about), uploaded to bytebin and shown at `tree-viewer-url`; with an online player the viewer also shows what
+  they hold.
+- `/lp bulkupdate <all|users|groups> <delete | update <permission|server|world> <value>> ["<field> <==|!=|~~|!~> <value>"]... [-s]`:
+  console only, confirmed with `/lp bulkupdate confirm <id>` unless `skip-bulkupdate-confirmation` is set; `disable-bulkupdate`
+  turns it off. It runs over the groups in memory and the users found in storage and saves each holder that changed.
+
 ## Not ported
 
-`verbose`, `tree`, `bulkupdate`, `import`, `export` and `translations` are listed like in LuckPerms and answer
-that they are not available on Horizon.
-
-`verbose`, `tree`, `bulkupdate`, `import`/`export`, translations,
-storage types other than MariaDB/MySQL, messaging other than SQL, Bukkit child and default permissions. Details in
-the Known gaps section.
+`import`, `export` and `translations` are listed like in LuckPerms and answer that they are not available on Horizon.
+Also not ported: storage types other than MariaDB/MySQL (and `memory`), messaging other than SQL, Bukkit child permissions,
+Vault and the PlaceholderAPI expansion. Details in the Known gaps section.
 
 ## Build
 
@@ -91,14 +102,14 @@ This mod provides the permission handler `luckperms:permissions`. Set `permissio
 `server.properties` so every mod's node queries are answered from LuckPerms; without it the built-in handler
 answers from node defaults and `/lp` only edits the database. Nodes with no LuckPerms rule fall back to the
 operator check (`op-level`, `enable-ops`) for online players; a node declared for everyone (level 0) by another mod
-therefore needs an explicit grant on the `default` group. Offline UUIDs are refused (`UnknownPlayer`), never granted.
+therefore needs an explicit grant on the `default` group, unless the mod is built with the cargo feature `horizon_handler_default` (off by default; it needs the engine change horizon-rust/horizon#18755): the handler then falls back to the default the owning mod declared for the node (everyone, operators of a level, nobody), as Paper falls back to plugin.yml. Offline UUIDs are refused (`UnknownPlayer`), never granted.
 
 ## Known gaps
 
 What does not work yet on arismoko/horizon (each is marked `TODO(arismoko-api: ...)` in `src/lib.rs`):
 
 - A granted vanilla command (`minecraft.command.<name>`) is lifted to run for a non-operator, but the command tree of a non-operator still hides that root.
-- A failed load kicks players after 5 seconds; the kick path was not exercised with a real database.
+- A login waits up to `horizon.login-wait-ms` (default 3000) for the player's data and is refused with a reason when the load fails or is late. With `0` the older behaviour returns: the player is let in with `default` rights and kicked after 5 seconds on failure. Neither path was exercised with a real database.
 
 ## Licence and origin
 

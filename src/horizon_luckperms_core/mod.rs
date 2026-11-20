@@ -27,6 +27,7 @@ pub mod runtime;
 pub mod storage;
 pub mod text;
 pub mod uuid;
+pub mod verbose;
 pub mod yaml;
 
 pub use calc::Tristate;

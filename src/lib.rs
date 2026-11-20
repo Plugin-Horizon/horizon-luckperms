@@ -247,6 +247,26 @@ impl Hooks for Mod {
     }
 
     fn player_login(&self, _: &mut dyn ServerHost, event: &mut PlayerLoginEvent<'_>) -> Flow {
+        // Like Paper's AsyncPlayerPreLoginEvent, a failed load refuses the connection: wait (bounded) for the
+        // worker's answer. `horizon.login-wait-ms = 0` keeps the older grace window below.
+        let wait = glue::login_wait_ms();
+        if wait > 0 {
+            let (tx, rx) = std::sync::mpsc::channel();
+            let queued = glue::pre_login(event.player, event.name, move |answer| {
+                let _ = tx.send(answer);
+            });
+            if !queued {
+                return Flow::Continue;
+            }
+            let refusal = match rx.recv_timeout(Duration::from_millis(wait)) {
+                Ok(Ok(())) => return Flow::Continue,
+                Ok(Err(reason)) => reason,
+                Err(_) => format!("no answer within {wait} ms"),
+            };
+            eprintln!("[LuckPerms] login of {} refused, data not loaded: {refusal}", event.name);
+            *event.reason = Some(Text::literal(crate::horizon_luckperms_core::runtime::PRE_LOGIN_REFUSAL));
+            return Flow::Cancel;
+        }
         // Paper loads the data in AsyncPlayerPreLoginEvent and refuses on failure. `player_login` runs on
         // the server thread, so it must not wait: the load starts on the worker, the player is let on (and
         // resolves as `default` only until the data is there), and `server_tick` kicks them when the load
@@ -371,7 +391,21 @@ impl Hooks for Mod {
             .and_then(|u| host.player(u))
             .and_then(|p| p.permission_level(&*host))
             .unwrap_or(0);
-        Some(match glue::handler_answer(event.uuid, &event.node.name, event.online.is_some(), level) {
+        // With the engine's declared default (feature `horizon_handler_default`), a node nobody set falls back to
+        // what the mod that owns it declared, as Paper falls back to plugin.yml.
+        #[cfg(feature = "horizon_handler_default")]
+        let answer = {
+            let declared = match event.default {
+                mod_api::NodeDefault::Level(l) => glue::DeclaredDefault::Level(l.level()),
+                mod_api::NodeDefault::Value(mod_api::PermissionValue::Boolean(true)) => glue::DeclaredDefault::Everyone,
+                mod_api::NodeDefault::Value(_) => glue::DeclaredDefault::Nobody,
+                _ => glue::DeclaredDefault::Level(1),
+            };
+            glue::handler_answer_declared(event.uuid, &event.node.name, event.online.is_some(), level, declared)
+        };
+        #[cfg(not(feature = "horizon_handler_default"))]
+        let answer = glue::handler_answer(event.uuid, &event.node.name, event.online.is_some(), level);
+        Some(match answer {
             Some(b) => Ok(PermissionValue::Boolean(b)),
             None if event.online.is_some() => Err(PermissionError::NotInitialized),
             None => Err(PermissionError::UnknownPlayer),

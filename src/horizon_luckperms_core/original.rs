@@ -29,8 +29,6 @@ pub const IGNORED: &[(&str, &str)] = &[
     ("apply-bukkit-child-permissions", "Bukkit permission attachments do not exist on Horizon"),
     ("apply-bukkit-attachment-permissions", "Bukkit permission attachments do not exist on Horizon"),
     ("apply-sponge-implicit-wildcards", "Sponge only"),
-    ("disable-bulkupdate", "/lp bulkupdate is not ported"),
-    ("skip-bulkupdate-confirmation", "/lp bulkupdate is not ported"),
     ("debug-logins", "only adds log lines in LuckPerms"),
     ("auto-install-translations", "English only (GAPS.md)"),
     ("register-command-list-data", "Bukkit command list data; Horizon builds its own tree"),
@@ -272,6 +270,14 @@ pub fn config_from_yaml(text: &str, reads: &mut Reads) -> Result<Config, String>
         set!(k, "apply-shorthand", c.apply_shorthand);
         set!(k, "prevent-primary-group-removal", c.prevent_primary_group_removal);
         set!(k, "apply-bukkit-default-permissions", c.apply_bukkit_default_permissions);
+        set!(k, "disable-bulkupdate", c.disable_bulkupdate);
+        set!(k, "skip-bulkupdate-confirmation", c.skip_bulkupdate_confirmation);
+        if let Some(v) = k.text("verbose-viewer-url") {
+            c.verbose_viewer_url = v;
+        }
+        if let Some(v) = k.text("tree-viewer-url") {
+            c.tree_viewer_url = v;
+        }
         set!(k, "enable-ops", c.horizon.enable_ops);
         set!(k, "commands-allow-op", c.horizon.commands_allow_op);
         stack(&mut k, "meta-formatting.prefix", &mut c.meta_formatting.prefix);

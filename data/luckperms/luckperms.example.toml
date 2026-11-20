@@ -41,6 +41,12 @@ disabled-contexts = []
 # never IP addresses) is uploaded to bytebin and opened at web-editor-url.
 bytebin-url = "https://usercontent.luckperms.net/"
 web-editor-url = "https://luckperms.net/editor/"
+# Where `/lp verbose upload` and `/lp tree` results are opened (the bytebin key is appended).
+verbose-viewer-url = "https://luckperms.net/verbose/"
+tree-viewer-url = "https://luckperms.net/treeview/"
+# `/lp bulkupdate`: disable it, or skip the confirm step.
+disable-bulkupdate = false
+skip-bulkupdate-confirmation = false
 
 
 [storage]
@@ -107,6 +113,9 @@ command-permissions = true
 grant-via-execute = false
 no-permission-message = "§cI'm sorry, but you do not have permission to perform this command."
 unload-delay-seconds = 60
+# How long a login waits for the player's data, in milliseconds. A failed or late load refuses the login (Paper
+# refuses it too). 0 lets the player in at once with default rights and kicks them after five seconds on failure.
+login-wait-ms = 3000
 
 # Mod commands and the node that guards them.
 [horizon.command-nodes]

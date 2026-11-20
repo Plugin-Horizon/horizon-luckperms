@@ -4,6 +4,7 @@
 
 mod args;
 mod editor;
+mod extra;
 mod fmt;
 mod holder;
 mod misc;
@@ -497,6 +498,9 @@ fn run(c: &mut Ctx<'_>, mut a: Vec<String>) {
         "createtrack" => track::create_track(c, args),
         "deletetrack" => track::delete_track(c, args),
         "listtracks" => track::list_tracks(c),
+        "verbose" => extra::verbose(c, args),
+        "tree" => extra::tree(c, args),
+        "bulkupdate" => extra::bulkupdate(c, args),
         "editor" => editor::editor(c, args),
         "applyedits" => editor::apply_edits(c, args),
         "trusteditor" => editor::trust_editor(c, args),
@@ -683,6 +687,25 @@ pub fn complete(rt: &Runtime, sender: &CommandSender, args: &[String]) -> Vec<St
                 _ => Vec::new(),
             }
         }
+        "verbose" => {
+            if rl == 0 {
+                starts(["on", "record", "off", "upload", "paste", "command"].iter().map(|x| x.to_string()).collect(), &partial)
+            } else {
+                Vec::new()
+            }
+        }
+        "tree" => {
+            if rl == 1 {
+                starts(players, &partial)
+            } else {
+                Vec::new()
+            }
+        }
+        "bulkupdate" => match rl {
+            0 => starts(["all", "users", "groups"].iter().map(|x| x.to_string()).collect(), &partial),
+            1 => starts(["delete", "update"].iter().map(|x| x.to_string()).collect(), &partial),
+            _ => Vec::new(),
+        },
         "deletegroup" => match rl {
             0 => starts(groups, &partial),
             1 => starts(vec!["--update-parent-lists".into()], &partial),

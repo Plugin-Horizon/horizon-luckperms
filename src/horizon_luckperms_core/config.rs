@@ -73,6 +73,14 @@ pub struct Config {
     pub bytebin_url: String,
     /// `web-editor-url`: the editor's address; the bytebin key is appended.
     pub web_editor_url: String,
+    /// `verbose-viewer-url`: the verbose viewer's address; the bytebin key is appended.
+    pub verbose_viewer_url: String,
+    /// `tree-viewer-url`: the permission tree viewer's address; the bytebin key is appended.
+    pub tree_viewer_url: String,
+    /// `disable-bulkupdate`: `/lp bulkupdate` answers that it is disabled.
+    pub disable_bulkupdate: bool,
+    /// `skip-bulkupdate-confirmation`: `/lp bulkupdate` runs at once, without the `confirm` step.
+    pub skip_bulkupdate_confirmation: bool,
     pub horizon: Horizon,
 }
 
@@ -164,6 +172,10 @@ pub struct Horizon {
     pub world_names: BTreeMap<String, String>,
     /// Seconds a user stays loaded after they leave (LuckPerms: about a minute).
     pub unload_delay_seconds: u64,
+    /// Milliseconds the login waits for the player's data (Paper refuses the connection when the load fails).
+    /// A failed or late load refuses the login with a reason. 0: the player is let in at once with `default`
+    /// rights and kicked after five seconds when the load fails (the older behaviour).
+    pub login_wait_ms: u64,
 }
 
 impl Default for Horizon {
@@ -178,6 +190,7 @@ impl Default for Horizon {
             no_permission_message: "§cI'm sorry, but you do not have permission to perform this command.".into(),
             world_names: BTreeMap::new(),
             unload_delay_seconds: 60,
+            login_wait_ms: 3000,
         }
     }
 }
@@ -241,6 +254,10 @@ impl Default for Config {
             unsupported: Vec::new(),
             bytebin_url: "https://usercontent.luckperms.net/".into(),
             web_editor_url: "https://luckperms.net/editor/".into(),
+            verbose_viewer_url: "https://luckperms.net/verbose/".into(),
+            tree_viewer_url: "https://luckperms.net/treeview/".into(),
+            disable_bulkupdate: false,
+            skip_bulkupdate_confirmation: false,
             horizon: Horizon::default(),
         }
     }

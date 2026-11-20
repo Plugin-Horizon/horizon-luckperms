@@ -1,3 +1,18 @@
+Parity: before ~70% -> after ~73% (~343/~470 items; method: audit + PARITY.md estimate; items = commands and sub commands, nodes, config keys, messages, features; an item behind an off-by-default feature or a missing engine API counts as not done)
+
+## Round 3 (blind, not compiled)
+- Added `/lp verbose` (on, record, off, upload; filter expressions; rate limit; bytebin upload) in `verbose.rs` + `command/extra.rs`,
+  fed by the handler (`glue::handler_answer`). `/lp tree` (known nodes, bytebin upload, reference user), `/lp bulkupdate` (data types,
+  delete/update of permission/server/world, constraints `== != ~~ !~`, `-s`, confirm id with 30 s expiry, console only).
+- Config: `disable-bulkupdate`, `skip-bulkupdate-confirmation`, `verbose-viewer-url`, `tree-viewer-url` (read from `config.yml` too),
+  `horizon.login-wait-ms`.
+- Login: `player_login` waits (bounded) for the data and refuses the connection with a reason; 0 keeps the grace window.
+- Handler default: cargo feature `horizon_handler_default` (off) reads `event.default` (horizon-rust/horizon#18755) and falls back to the
+  node's declared default (`glue::declared_answer`, unit tested).
+- Open: storage backends h2/sqlite/yaml/json/hocon/mongodb/postgres (the SQL layer is written against the `mysql` crate; the file
+  formats need a Configurate-compatible reader/writer), redis/nats/rabbitmq messaging, import/export, translations, `verbose command`,
+  Vault, the PlaceholderAPI expansion, the LuckPerms API, granted vanilla commands (engine API, see GAPS_UPSTREAM), Bukkit child permissions.
+
 # hmod port: luckperms
 Round 1
 - Fixed:

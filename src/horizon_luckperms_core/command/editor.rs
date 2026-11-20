@@ -337,7 +337,7 @@ fn open_session(c: &mut Ctx<'_>, holders: Vec<EditorHolder>, tracks: Vec<Track>)
 }
 
 /// `EDITOR_HTTP_REQUEST_FAILURE` / `EDITOR_HTTP_UNKNOWN_FAILURE`
-fn http_failure(c: &mut Ctx<'_>, e: HttpError) {
+pub(super) fn http_failure(c: &mut Ctx<'_>, e: HttpError) {
     match e {
         HttpError::Status(code, message) => c.msg(format!(
             "\u{a7}c{}. ({} \u{a7}4{code}\u{a7}c, {}='{message}')",
