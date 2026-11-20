@@ -106,10 +106,16 @@ fn log(line: &str) {
     eprintln!("[LuckPerms] {line}");
 }
 
+/// The Bukkit calculator classes `disabled-context-calculators` names: the player contexts (world,
+/// gamemode, dimension-type) and the configuration contexts (server, static contexts).
+const PLAYER_CALCULATOR: &str = "me.lucko.luckperms.bukkit.context.BukkitPlayerCalculator";
+const CONFIGURATION_CALCULATOR: &str = "me.lucko.luckperms.common.context.calculator.ConfigurationContextCalculator";
+
 /// Starts the service: creates the tables if needed, loads every group and track (as
 /// LuckPerms does on enable, on this thread), then starts the worker.
 pub fn start(cfg: Config, mut storage: Box<dyn Storage>, level_name: &str) -> Result<Arc<Runtime>, String> {
     stop();
+    context::set_satisfy_all_values(cfg.context_satisfy_all);
     storage.init()?;
     let mut model = Model::default();
     for g in storage.load_all_groups()? {
@@ -276,21 +282,27 @@ impl Runtime {
         let cfg = self.config();
         let level = self.level_name.read().map(|l| l.clone()).unwrap_or_else(|_| "world".into());
         let mut set = ContextSet::new();
-        set.add(context::SERVER, &cfg.server);
-        for world in cfg.world_names(&p.dimension, &level) {
-            set.add(context::WORLD, &world);
+        if !cfg.calculator_disabled(CONFIGURATION_CALCULATOR) {
+            set.add(context::SERVER, &cfg.server);
         }
-        let dim = p.dimension.rsplit(':').next().unwrap_or(&p.dimension);
-        set.add(context::DIMENSION_TYPE, dim);
-        let gm = match p.game_mode {
-            1 => "creative",
-            2 => "adventure",
-            3 => "spectator",
-            _ => "survival",
-        };
-        set.add(context::GAMEMODE, gm);
-        for (k, v) in &cfg.static_contexts {
-            set.add(k, v);
+        if !cfg.calculator_disabled(PLAYER_CALCULATOR) {
+            for world in cfg.world_names(&p.dimension, &level) {
+                set.add(context::WORLD, &world);
+            }
+            let dim = p.dimension.rsplit(':').next().unwrap_or(&p.dimension);
+            set.add(context::DIMENSION_TYPE, dim);
+            let gm = match p.game_mode {
+                1 => "creative",
+                2 => "adventure",
+                3 => "spectator",
+                _ => "survival",
+            };
+            set.add(context::GAMEMODE, gm);
+        }
+        if !cfg.calculator_disabled(CONFIGURATION_CALCULATOR) {
+            for (k, v) in &cfg.static_contexts {
+                set.add(k, v);
+            }
         }
         for k in &cfg.disabled_contexts {
             set.remove_key(&k.to_lowercase());
@@ -303,9 +315,11 @@ impl Runtime {
     pub fn static_contexts(&self) -> ContextSet {
         let cfg = self.config();
         let mut set = ContextSet::new();
-        set.add(context::SERVER, &cfg.server);
-        for (k, v) in &cfg.static_contexts {
-            set.add(k, v);
+        if !cfg.calculator_disabled(CONFIGURATION_CALCULATOR) {
+            set.add(context::SERVER, &cfg.server);
+            for (k, v) in &cfg.static_contexts {
+                set.add(k, v);
+            }
         }
         set
     }
@@ -517,6 +531,7 @@ impl Worker {
             }
             Job::ReloadConfig(cfg) => {
                 self.rt.messaging.store(cfg.sql_messaging(), Ordering::Relaxed);
+                context::set_satisfy_all_values(cfg.context_satisfy_all);
                 if let Ok(mut c) = self.rt.cfg.write() {
                     *c = Arc::new(cfg);
                 }
@@ -773,6 +788,9 @@ impl Worker {
         let mut m = self.rt.model.write().unwrap_or_else(|e| e.into_inner());
         for u in gone {
             if !online.contains(&u) {
+                if cfg.debug_logins {
+                    log(&format!("User Housekeeper: unloading user data for {}", crate::horizon_luckperms_core::uuid::format(u)));
+                }
                 m.users.remove(&u);
             }
         }

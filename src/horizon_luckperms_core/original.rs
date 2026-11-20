@@ -26,10 +26,20 @@ pub const IGNORED: &[(&str, &str)] = &[
     ("nats.address", "NATS messenger not spoken; refused when enabled"),
     ("rabbitmq.address", "RabbitMQ messenger not spoken; refused when enabled"),
     ("rabbitmq.vhost", "RabbitMQ messenger not spoken; refused when enabled"),
+    ("redis.username", "Redis messenger not spoken; its credentials are not used"),
+    ("redis.password", "Redis messenger not spoken; its credentials are not used"),
+    ("redis.sentinel.enabled", "Redis messenger not spoken; refused when enabled"),
+    ("redis.sentinel.master", "Redis messenger not spoken; its credentials are not used"),
+    ("redis.sentinel.username", "Redis messenger not spoken; its credentials are not used"),
+    ("redis.sentinel.password", "Redis messenger not spoken; its credentials are not used"),
+    ("nats.username", "NATS messenger not spoken; its credentials are not used"),
+    ("nats.password", "NATS messenger not spoken; its credentials are not used"),
+    ("nats.token", "NATS messenger not spoken; its credentials are not used"),
+    ("rabbitmq.username", "RabbitMQ messenger not spoken; its credentials are not used"),
+    ("rabbitmq.password", "RabbitMQ messenger not spoken; its credentials are not used"),
     ("apply-bukkit-child-permissions", "Bukkit permission attachments do not exist on Horizon"),
     ("apply-bukkit-attachment-permissions", "Bukkit permission attachments do not exist on Horizon"),
     ("apply-sponge-implicit-wildcards", "Sponge only"),
-    ("debug-logins", "only adds log lines in LuckPerms"),
     ("auto-install-translations", "English only (GAPS.md)"),
     ("register-command-list-data", "Bukkit command list data; Horizon builds its own tree"),
     ("use-server-uuid-cache", "Horizon's own player list is used"),
@@ -272,6 +282,14 @@ pub fn config_from_yaml(text: &str, reads: &mut Reads) -> Result<Config, String>
         set!(k, "apply-bukkit-default-permissions", c.apply_bukkit_default_permissions);
         set!(k, "disable-bulkupdate", c.disable_bulkupdate);
         set!(k, "skip-bulkupdate-confirmation", c.skip_bulkupdate_confirmation);
+        set!(k, "debug-logins", c.debug_logins);
+        set!(k, "allow-invalid-usernames", c.allow_invalid_usernames);
+        if let Some(v) = k.text("context-satisfy-mode") {
+            c.context_satisfy_all = v.trim().eq_ignore_ascii_case("all-values-per-key");
+        }
+        if let Some(v) = k.list("disabled-context-calculators") {
+            c.disabled_context_calculators = v;
+        }
         if let Some(v) = k.text("verbose-viewer-url") {
             c.verbose_viewer_url = v;
         }
@@ -314,12 +332,6 @@ pub fn config_from_yaml(text: &str, reads: &mut Reads) -> Result<Config, String>
         }
         if k.flag("use-vault-server") == Some(true) {
             notes.push("use-vault-server (not supported)".into());
-        }
-        if k.node("disabled-context-calculators").is_some_and(|n| !n.items().is_empty()) {
-            notes.push("disabled-context-calculators (not supported)".into());
-        }
-        if k.text("context-satisfy-mode").is_some_and(|v| v != "at-least-one-value-per-key") {
-            notes.push("context-satisfy-mode (the port always uses at-least-one-value-per-key)".into());
         }
         if k.text("meta-value-selection-default").is_some_and(|v| v != "inheritance") {
             notes.push("meta-value-selection-default (only inheritance is supported)".into());
@@ -634,6 +646,26 @@ auto-op: false
         let rep = inspect_yaml("some-new-key: 1\nserver: x\n");
         assert_eq!(rep.unread, vec!["some-new-key".to_string()]);
         assert!(rep.read.contains(&"server".to_string()));
+    }
+
+    #[test]
+    fn satisfy_mode_calculators_and_debug_logins_are_read() {
+        let (c, _) = load(
+            "context-satisfy-mode: all-values-per-key\ndisabled-context-calculators:\n  - me.lucko.luckperms.bukkit.context.BukkitPlayerCalculator\ndebug-logins: true\n",
+        );
+        assert!(c.context_satisfy_all);
+        assert!(c.calculator_disabled("me.lucko.luckperms.bukkit.context.bukkitplayercalculator"));
+        assert!(!c.calculator_disabled("me.lucko.luckperms.common.context.calculator.ConfigurationContextCalculator"));
+        assert!(c.debug_logins);
+        assert!(c.unsupported.is_empty());
+    }
+
+    #[test]
+    fn satisfy_mode_defaults_to_at_least_one() {
+        let (c, _) = load("context-satisfy-mode: at-least-one-value-per-key\n");
+        assert!(!c.context_satisfy_all);
+        assert!(!c.debug_logins);
+        assert!(c.disabled_context_calculators.is_empty());
     }
 
     #[test]

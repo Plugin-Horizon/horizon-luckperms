@@ -2,6 +2,7 @@
 //! anything a config adds), with LuckPerms' matching, ordering and JSON forms.
 
 use std::cmp::Ordering;
+use std::sync::atomic::AtomicBool;
 use std::collections::{BTreeMap, BTreeSet};
 
 pub const SERVER: &str = "server";
@@ -202,6 +203,23 @@ pub fn is_global_entry(key: &str, value: &str) -> bool {
 }
 
 /// The flags of a query that decide whether nodes without a server/world context count
+/// `context-satisfy-mode: all-values-per-key` in the config (set by the runtime at start and reload).
+static ALL_VALUES_PER_KEY: AtomicBool = AtomicBool::new(false);
+
+/// Sets the configured satisfy mode.
+pub fn set_satisfy_all_values(on: bool) {
+    ALL_VALUES_PER_KEY.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// The mode node contexts are matched with (`NodeMapMutable.contextSatisfyMode`).
+pub fn satisfy_mode() -> SatisfyMode {
+    if ALL_VALUES_PER_KEY.load(std::sync::atomic::Ordering::Relaxed) {
+        SatisfyMode::AllValuesPerKey
+    } else {
+        SatisfyMode::AtLeastOneValuePerKey
+    }
+}
+
 /// (`include-global`, `include-global-world`, `apply-global-groups`, `apply-global-world-groups`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct GlobalFlags {

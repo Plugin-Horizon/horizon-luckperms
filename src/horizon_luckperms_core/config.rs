@@ -81,6 +81,12 @@ pub struct Config {
     pub disable_bulkupdate: bool,
     /// `skip-bulkupdate-confirmation`: `/lp bulkupdate` runs at once, without the `confirm` step.
     pub skip_bulkupdate_confirmation: bool,
+    /// `context-satisfy-mode: all-values-per-key` (otherwise at-least-one-value-per-key).
+    pub context_satisfy_all: bool,
+    /// `disabled-context-calculators`: class-name prefixes (Bukkit names) whose contexts are not calculated.
+    pub disabled_context_calculators: Vec<String>,
+    /// `debug-logins`: a log line when the housekeeper unloads a user.
+    pub debug_logins: bool,
     pub horizon: Horizon,
 }
 
@@ -258,6 +264,9 @@ impl Default for Config {
             tree_viewer_url: "https://luckperms.net/treeview/".into(),
             disable_bulkupdate: false,
             skip_bulkupdate_confirmation: false,
+            context_satisfy_all: false,
+            disabled_context_calculators: Vec::new(),
+            debug_logins: false,
             horizon: Horizon::default(),
         }
     }
@@ -317,6 +326,12 @@ impl Config {
 
     /// The real world name followed by its `world-rewrite` aliases, applied recursively (each
     /// name once): LuckPerms adds the aliases in addition to the real name.
+    /// Whether `disabled-context-calculators` names this calculator class (a prefix, ignoring case).
+    pub fn calculator_disabled(&self, class: &str) -> bool {
+        let class = class.to_lowercase();
+        self.disabled_context_calculators.iter().any(|p| class.starts_with(&p.to_lowercase()))
+    }
+
     pub fn world_names(&self, dimension: &str, level_name: &str) -> Vec<String> {
         let mut out = vec![self.world_name(dimension, level_name)];
         while let Some(next) = self.world_rewrite.get(out.last().map(String::as_str).unwrap_or_default()) {

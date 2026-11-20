@@ -1396,7 +1396,7 @@ fn list_members(c: &mut Ctx<'_>, l: &mut Loaded, a: Args) -> R {
             return Ok(());
         }
     };
-    let wanted = |n: &Node| n.value && (cx.is_empty() || n.contexts.is_satisfied_by(&cx, crate::horizon_luckperms_core::context::SatisfyMode::AtLeastOneValuePerKey));
+    let wanted = |n: &Node| n.value && (cx.is_empty() || n.contexts.is_satisfied_by(&cx, crate::horizon_luckperms_core::context::satisfy_mode()));
     let mut users: Vec<(String, Node)> = Vec::new();
     let mut groups: Vec<(String, Node)> = Vec::new();
     for (h, n) in hits {

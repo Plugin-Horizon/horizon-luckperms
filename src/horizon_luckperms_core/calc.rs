@@ -3,7 +3,7 @@
 //! (prefix/suffix stacks, meta values, weight, primary group).
 
 use crate::horizon_luckperms_core::config::{Config, StackFormat};
-use crate::horizon_luckperms_core::context::{ContextSet, GlobalFlags, SatisfyMode};
+use crate::horizon_luckperms_core::context::{self, ContextSet, GlobalFlags};
 use crate::horizon_luckperms_core::model::{Model, DEFAULT_GROUP};
 use crate::horizon_luckperms_core::node::{expand_shorthand, Kind, Node};
 use std::collections::{HashMap, HashSet};
@@ -173,7 +173,7 @@ fn own_nodes<'a>(model: &'a Model, h: &HolderRef, contexts: &ContextSet, flags: 
     holder_nodes(model, h)
         .into_iter()
         .filter(|n| !n.has_expired(now))
-        .filter(|n| n.contexts.is_satisfied_by(contexts, SatisfyMode::AtLeastOneValuePerKey))
+        .filter(|n| n.contexts.is_satisfied_by(contexts, context::satisfy_mode()))
         .filter(|n| {
             if flags.excludes_normal(&n.contexts) {
                 matches!(n.kind, Kind::Inheritance(_)) && flags.includes_inheritance(&n.contexts)
@@ -192,7 +192,7 @@ fn successors(model: &Model, cfg: &Config, h: &HolderRef, contexts: &ContextSet,
     let mut groups: Vec<String> = Vec::new();
     for n in holder_nodes(model, h) {
         let Kind::Inheritance(g) = &n.kind else { continue };
-        if !n.value || n.has_expired(now) || !n.contexts.is_satisfied_by(contexts, SatisfyMode::AtLeastOneValuePerKey) {
+        if !n.value || n.has_expired(now) || !n.contexts.is_satisfied_by(contexts, context::satisfy_mode()) {
             continue;
         }
         if !flags.includes_inheritance(&n.contexts) {
@@ -302,7 +302,7 @@ pub fn primary_group(model: &Model, cfg: &Config, uuid: u128, contexts: &Context
             let mut seen = HashSet::new();
             for n in holder_nodes(model, &start) {
                 let Kind::Inheritance(g) = &n.kind else { continue };
-                if !n.value || n.has_expired(now) || !n.contexts.is_satisfied_by(contexts, SatisfyMode::AtLeastOneValuePerKey) {
+                if !n.value || n.has_expired(now) || !n.contexts.is_satisfied_by(contexts, context::satisfy_mode()) {
                     continue;
                 }
                 if !model.groups.contains_key(g) || !seen.insert(g.clone()) {
