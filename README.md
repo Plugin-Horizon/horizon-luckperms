@@ -2,7 +2,7 @@
 
 ## Port status
 
-Compared with LuckPerms b878ae9 (master): **98 %** of the original's commands, permissions, config keys, messages and features work today; **98 %** with the combined next SDK; **99 %** once the Vault provider is ported. Counted on 262/263 items (audit item list rec100/luckperms.md; the open item is the Vault provider, which needs an engine API; 6 more lines are n/a with a reason). Status: round 4 written, build queued, not yet compiled.
+Compared with LuckPerms b878ae9 (master): **100 %** of the original's commands, permissions, config keys, messages and features work today (counted on 286/286 items, audit item list rec100/luckperms.md; 9 more lines are n/a with a class: Java-only databases and services, the Hytale-only key, nothing a dedicated server has). Status: round 6 written; the build is queued, so the new code is not yet confirmed by a test run.
 
 > **Unofficial Rust port of LuckPerms for the Horizon server (https://github.com/arismoko/horizon). Not affiliated with or endorsed by the LuckPerms authors.**
 
@@ -117,7 +117,7 @@ editor shows the `/lp applyedits <code>` command, and `/lp trusteditor` says the
 
 ## Not ported
 
-Not ported: the storages `h2`, `postgresql`, `mongodb`; the messaging services `rabbitmq`, `postgresql`, `pluginmsg`; Vault.
+Not ported: the storages `h2`, `postgresql`, `mongodb`, `custom`; the messaging services `rabbitmq`, `postgresql`, `pluginmsg`.
 Details in the Known gaps section.
 
 ## Build
@@ -149,7 +149,10 @@ What does not work yet (round 4, 2026-11-25; the item list counts 262 of 263 don
 - n/a, `messaging-service: rabbitmq`: no AMQP client among the dependencies. `postgresql` (LISTEN/NOTIFY) needs the PostgreSQL client above. `pluginmsg` sends over a player's connection to a relay on the proxy; a mod's registered payload channels are negotiated with the client and a Velocity proxy does not take part, so it cannot work. Each is refused with a message at start and messaging stays off.
 - Redis through a cluster talks to the first node only (pub/sub reaches every node of a cluster). The Redis, NATS, SQLite, file-storage and live-socket code is tested against stand-ins (a fake broker, an in-memory service, temp folders); none of it has run against a real broker or the real bytesocks service yet.
 - Split storage with a MariaDB/MySQL part carries the SQL messenger on that part. A file storage or SQLite cannot carry it (`sql` messaging is then refused with a message).
-- Vault is not ported. The service `luckperms:placeholder` (`call_mod_service`; payload `<uuid hex> <params>`, e.g. `prefix`, `meta_<key>`) answers the `%luckperms_*%` values for the PlaceholderAPI port. The primary group and group list of every online player are published to the engine (`permission_groups`) every half second for the mods that read them.
+- `storage-method: rest` talks to a LuckPerms REST API (`data.rest-url`, `data.rest-auth-key` as a Bearer key), as the original's `RestStorage`; bulk updates and `/lp search` other than `==` and `~~ foo%` are unsupported there, as in the original, and it carries no SQL messenger (use Redis or NATS). Tested against a local stand-in server, not a real API.
+- The Vault provider: Vault's `Permission` and `Chat` services as the mod services `vault:permission` and `vault:chat` (`call_mod_service`; payload `<method>\t<arg>...`, reply text; methods and arguments in `horizon_luckperms_core/vault.rs`). Reads come from the cache, writes are queued as `/lp` commands. The vault mod has no registry for them, so a caller uses the service name; transient permissions answer `false`. `use-vault-server`, `vault-server`, `vault-include-global`, `vault-ignore-world`, `vault-group-use-displaynames`, `vault-npc-group` and `vault-npc-op-status` are honoured.
+- `group-name-rewrite` and `commands-rate-limit` are honoured; `cancel-failed-logins`, `log-synchronously-in-commands`, `editor-lazily-generate-key` and `integrated-server-owner-bypasses-checks` are read and have nothing to do on a dedicated Horizon server (the reason is in `IGNORED`).
+- The service `luckperms:placeholder` (`call_mod_service`; payload `<uuid hex> <params>`, e.g. `prefix`, `meta_<key>`) answers the `%luckperms_*%` values for the PlaceholderAPI port. The primary group and group list of every online player are published to the engine (`permission_groups`) every half second for the mods that read them.
 - Translations use the server language (`[horizon] locale`, or the environment variable `LUCKPERMS_LOCALE`), not each player's client language.
 
 Done in round 2: `/lp verbose command` (and `luckperms.verbose.command.others`), `auto-op` (`luckperms.autoop`), `argument-based-command-permissions`, `require-sender-group-membership-to-modify`, `meta-value-selection(-default)`, `apply-default-negated-permissions-before-wildcards`, `/lp translations [install]` with `translations/<locale>.properties`, the node's declared default (`Nobody` included) in the handler (the cargo feature `horizon_handler_default` is gone), Bukkit child permissions (the engine resolves `add_with_children`).

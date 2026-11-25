@@ -30,14 +30,12 @@ pub const IGNORED: &[(&str, &str)] = &[
     ("apply-sponge-implicit-wildcards", "Sponge only"),
     ("auto-install-translations", "English only (GAPS.md)"),
     ("register-command-list-data", "Bukkit command list data; Horizon builds its own tree"),
+    ("cancel-failed-logins", "not read by LuckPerms' Bukkit module either (Velocity, Bungee and Forge only); a failed data load always refuses the login here (test a_failed_load_refuses_the_login_with_the_generic_reason)"),
+    ("log-synchronously-in-commands", "commands run on the worker thread and write their log entry before the answer is sent; there is no asynchronous log dispatch to wait for"),
+    ("chat-formatter.enabled", "deprecated; only LuckPerms' Hytale module reads it, Paper has no chat formatter"),
+    ("integrated-server-owner-bypasses-checks", "concerns the owner of an integrated (singleplayer) server; a dedicated Horizon server has none, and LuckPerms' Paper module never reads it"),
+    ("editor-lazily-generate-key", "the editor key is made when first needed (editorsocket.rs), which is what the lazy setting asks for"),
     ("use-server-uuid-cache", "Horizon's own player list is used"),
-    ("vault-unsafe-lookups", "Vault is not ported"),
-    ("vault-group-use-displaynames", "Vault is not ported"),
-    ("vault-npc-group", "Vault is not ported"),
-    ("vault-npc-op-status", "Vault is not ported"),
-    ("vault-server", "Vault is not ported"),
-    ("vault-include-global", "Vault is not ported"),
-    ("vault-ignore-world", "Vault is not ported"),
 ];
 
 /// Map keys whose entries are data (group or world names): a report shows them as `<map>.*`.
@@ -285,9 +283,47 @@ pub fn config_from_yaml(text: &str, reads: &mut Reads) -> Result<Config, String>
             notes.push(format!("messaging-service: {m} is not supported (messaging off)"));
         }
 
+        // `SYNC_TIME`: `sync-minutes`, else `data.sync-minutes`.
         if let Some(v) = k.number("sync-minutes") {
             c.sync_minutes = v;
         }
+        if c.sync_minutes < 0 {
+            if let Some(v) = k.number("data.sync-minutes") {
+                c.sync_minutes = v;
+            }
+        }
+        // `data.pool-size` is the old name of `data.pool-settings.maximum-pool-size`.
+        if k.node("data.pool-settings.maximum-pool-size").is_none() {
+            if let Some(v) = k.number("data.pool-size") {
+                c.storage.maximum_pool_size = v.max(1) as usize;
+            }
+        }
+        if let Some(v) = k.text("data.rest-url") {
+            c.storage.rest_url = v;
+        }
+        if let Some(v) = k.text("data.rest-auth-key") {
+            c.storage.rest_auth_key = v;
+        }
+        if let Some(v) = k.text("bytebin-url") {
+            c.bytebin_url = v;
+        }
+        if let Some(v) = k.text("web-editor-url") {
+            c.web_editor_url = v;
+        }
+        set!(k, "commands-rate-limit", c.commands_rate_limit);
+        c.group_name_rewrite = k.texts("group-name-rewrite").into_iter().map(|(a, b)| (a.to_lowercase(), b)).collect();
+        set!(k, "use-vault-server", c.use_vault_server);
+        if let Some(v) = k.text("vault-server") {
+            c.vault_server = v.to_lowercase();
+        }
+        set!(k, "vault-include-global", c.vault_include_global);
+        set!(k, "vault-ignore-world", c.vault_ignore_world);
+        set!(k, "vault-group-use-displaynames", c.vault_group_use_displaynames);
+        if let Some(v) = k.text("vault-npc-group") {
+            c.vault_npc_group = v;
+        }
+        set!(k, "vault-npc-op-status", c.vault_npc_op_status);
+        set!(k, "vault-unsafe-lookups", c.vault_unsafe_lookups);
         set!(k, "auto-push-updates", c.auto_push_updates);
         set!(k, "push-log-entries", c.push_log_entries);
         set!(k, "broadcast-received-log-entries", c.broadcast_received_log_entries);
@@ -364,14 +400,10 @@ pub fn config_from_yaml(text: &str, reads: &mut Reads) -> Result<Config, String>
         if k.flag("update-client-command-list") == Some(false) {
             notes.push("update-client-command-list (set false; the port always updates the list)".into());
         }
-        if k.flag("use-vault-server") == Some(true) {
-            notes.push("use-vault-server (not supported)".into());
-        }
     }
     for (path, _) in IGNORED {
         reads.mark(path);
     }
-    reads.mark("use-vault-server");
     c.unsupported = notes;
     Ok(c)
 }
@@ -672,7 +704,7 @@ auto-op: false
         assert!(!c.unsupported.iter().any(|n| n.starts_with("auto-op")), "auto-op false is default");
         let (c, _) = load("auto-op: true\nuse-vault-server: true\nmeta-value-selection-default: weight\n");
         assert!(c.auto_op && !c.horizon.enable_ops, "auto-op turns enable-ops off");
-        assert!(c.unsupported.iter().any(|n| n.starts_with("use-vault-server")));
+        assert!(c.use_vault_server);
         assert_eq!(c.meta_value_selection_default, "weight");
         let (c, _) = load("meta-value-selection:\n  Level: Highest-Number\nrequire-sender-group-membership-to-modify: true\n");
         assert_eq!(c.meta_value_selection.get("level").map(String::as_str), Some("highest-number"));
@@ -751,5 +783,34 @@ auto-op: false
         assert_eq!(read, vec!["default-contexts", "static-contexts"]);
         assert_eq!(rep.unread, vec!["extra"]);
         assert!(inspect_json("{").error.is_some());
+    }
+}
+
+#[cfg(test)]
+mod round6_tests {
+    use super::*;
+
+    fn load(text: &str) -> Config {
+        let mut reads = Reads::default();
+        config_from_yaml(text, &mut reads).unwrap()
+    }
+
+    #[test]
+    fn the_keys_the_audit_found_missing_are_read() {
+        let c = load(
+            "data:\n  sync-minutes: 9\n  pool-size: 7\n  rest-url: http://rest.example:8080/\n  rest-auth-key: k\nbytebin-url: https://b.example/\nweb-editor-url: https://e.example/\ncommands-rate-limit: false\ngroup-name-rewrite:\n  Admin: Administrator\nuse-vault-server: true\nvault-server: Hub\nvault-include-global: false\nvault-ignore-world: true\nvault-group-use-displaynames: false\nvault-npc-group: npcs\nvault-npc-op-status: true\n",
+        );
+        assert_eq!(c.sync_minutes, 9);
+        assert_eq!(c.storage.maximum_pool_size, 7);
+        assert_eq!(c.storage.rest_url, "http://rest.example:8080/");
+        assert_eq!(c.storage.rest_auth_key, "k");
+        assert_eq!(c.bytebin_url, "https://b.example/");
+        assert_eq!(c.web_editor_url, "https://e.example/");
+        assert!(!c.commands_rate_limit);
+        assert_eq!(c.group_name_rewrite.get("admin").map(String::as_str), Some("Administrator"));
+        assert!(c.use_vault_server && !c.vault_include_global && c.vault_ignore_world && !c.vault_group_use_displaynames && c.vault_npc_op_status);
+        assert_eq!((c.vault_server.as_str(), c.vault_npc_group.as_str()), ("hub", "npcs"));
+        let d = load("server: global\n");
+        assert!(d.commands_rate_limit && d.vault_include_global && d.vault_group_use_displaynames);
     }
 }

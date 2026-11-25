@@ -114,6 +114,26 @@ pub struct Config {
     pub disabled_context_calculators: Vec<String>,
     /// `debug-logins`: a log line when the housekeeper unloads a user.
     pub debug_logins: bool,
+    /// `commands-rate-limit`: a player's `/lp` within 500 ms of their previous one is ignored.
+    pub commands_rate_limit: bool,
+    /// `group-name-rewrite`: group name -> display name used when a group has no display-name node.
+    pub group_name_rewrite: BTreeMap<String, String>,
+    /// `use-vault-server`: the Vault provider reads and writes under the server context `vault-server`.
+    pub use_vault_server: bool,
+    /// `vault-server` (lower case).
+    pub vault_server: String,
+    /// `vault-include-global`: Vault lookups also count nodes without a server context.
+    pub vault_include_global: bool,
+    /// `vault-ignore-world`: Vault calls ignore the world they are given.
+    pub vault_ignore_world: bool,
+    /// `vault-group-use-displaynames`: Vault answers group display names instead of names.
+    pub vault_group_use_displaynames: bool,
+    /// `vault-npc-group`: the group whose data an NPC (a version 2 UUID) gets.
+    pub vault_npc_group: String,
+    /// `vault-npc-op-status`: NPCs count as operators.
+    pub vault_npc_op_status: bool,
+    /// `vault-unsafe-lookups`: read; the provider never reads storage on the caller's thread, so it has no effect.
+    pub vault_unsafe_lookups: bool,
     pub horizon: Horizon,
 }
 
@@ -148,6 +168,10 @@ pub struct Storage {
     /// `pool-settings.properties` (`useUnicode`, `characterEncoding`). Read but not applied: the port always
     /// connects as utf8mb4, a superset of the original utf8.
     pub pool_properties: BTreeMap<String, String>,
+    /// `data.rest-url` (`storage-method: rest`): the base URL of a LuckPerms REST API.
+    pub rest_url: String,
+    /// `data.rest-auth-key`: sent as a Bearer token when not empty.
+    pub rest_auth_key: String,
 }
 
 
@@ -380,6 +404,8 @@ impl Default for Storage {
             keepalive_time_ms: 0,
             maximum_lifetime_ms: 0,
             pool_properties: BTreeMap::new(),
+            rest_url: "http://localhost:8080/".into(),
+            rest_auth_key: String::new(),
         }
     }
 }
@@ -442,6 +468,16 @@ impl Default for Config {
             context_satisfy_all: false,
             disabled_context_calculators: Vec::new(),
             debug_logins: false,
+            commands_rate_limit: true,
+            group_name_rewrite: BTreeMap::new(),
+            use_vault_server: false,
+            vault_server: "global".into(),
+            vault_include_global: true,
+            vault_ignore_world: false,
+            vault_group_use_displaynames: true,
+            vault_npc_group: "default".into(),
+            vault_npc_op_status: false,
+            vault_unsafe_lookups: false,
             horizon: Horizon::default(),
         }
     }

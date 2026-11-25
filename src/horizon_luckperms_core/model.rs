@@ -151,14 +151,29 @@ impl Group {
             .max()
     }
 
-    /// The own display name node, if any, preferring global ones.
+    /// The own display name node, if any, preferring global ones; else the `group-name-rewrite` entry
+    /// (`Group.calculateDisplayName`; an entry equal to the name does not count).
     pub fn display_name(&self) -> Option<String> {
         self.data
             .sorted()
             .into_iter()
             .rev()
             .find_map(|n| if let Kind::DisplayName(d) = &n.kind { Some(d.clone()) } else { None })
+            .or_else(|| {
+                let r = rewrites().read().unwrap_or_else(|e| e.into_inner());
+                r.get(&self.name).filter(|v| **v != self.name).cloned()
+            })
     }
+}
+
+fn rewrites() -> &'static std::sync::RwLock<std::collections::BTreeMap<String, String>> {
+    static R: std::sync::OnceLock<std::sync::RwLock<std::collections::BTreeMap<String, String>>> = std::sync::OnceLock::new();
+    R.get_or_init(Default::default)
+}
+
+/// Sets `group-name-rewrite` (set by the runtime at start and reload, like the satisfy mode).
+pub fn set_group_name_rewrites(map: &std::collections::BTreeMap<String, String>) {
+    *rewrites().write().unwrap_or_else(|e| e.into_inner()) = map.iter().map(|(k, v)| (k.to_lowercase(), v.clone())).collect();
 }
 
 #[derive(Clone, Debug)]
@@ -284,6 +299,25 @@ impl Model {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn group_name_rewrite_is_the_display_name_fallback() {
+        // The rewrites are process-wide: a group name no other test uses.
+        use crate::horizon_luckperms_core::node::key;
+        let mut map = std::collections::BTreeMap::new();
+        map.insert("rewritegrp".to_owned(), "Rewritten Group".to_owned());
+        map.insert("samegrp".to_owned(), "samegrp".to_owned());
+        set_group_name_rewrites(&map);
+        let mut g = Group::new("rewritegrp");
+        assert_eq!(g.display_name().as_deref(), Some("Rewritten Group"));
+        assert_eq!(Group::new("samegrp").display_name(), None, "an entry equal to the name does not count");
+        g.data.set(Node::permanent(key::display_name("Own"), true, ContextSet::new()));
+        assert_eq!(g.display_name().as_deref(), Some("Own"), "a display name node wins");
+        let mut m = Model::default();
+        m.groups.insert("rewritegrp".into(), Group::new("rewritegrp"));
+        assert!(m.group_by_name_or_display("rewritten group").is_some());
+        set_group_name_rewrites(&Default::default());
+    }
 
     fn n(key: &str, v: bool) -> Node {
         Node::permanent(key, v, ContextSet::new())

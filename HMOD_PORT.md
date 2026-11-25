@@ -1,4 +1,4 @@
-Parity: 98% now (262/263 items of the audit list; the rest is Vault, an engine API). Older estimate: 76% now / 77% with our PRs / 77% with engine changes / 77% with new SDK (~358/~470 items; estimate from the round 3 count plus this round; items = commands and sub commands, nodes, config keys, messages, features; an item behind an off-by-default feature or a missing engine API counts as not done)
+Parity: 100% now (286/286 items of the audit list, round 6; n/a lines are not counted). Older estimate: 76% now / 77% with our PRs / 77% with engine changes / 77% with new SDK (~358/~470 items; estimate from the round 3 count plus this round; items = commands and sub commands, nodes, config keys, messages, features; an item behind an off-by-default feature or a missing engine API counts as not done)
 
 ## Round 100 (blind, not compiled): checklist and closed items
 Closed this round: `/lp export` (file, `--without-users`, `--without-groups`, `--upload`), `/lp import` (file, `--replace`,
@@ -33,7 +33,7 @@ Checklist round 100 (ticked = matches the original; the Paper side is `common/..
 - [ ] Bukkit child and default permissions (`plugin.yml` children and `default`): no node children on Horizon.
 - [ ] Granted vanilla commands for non-operators (`minecraft.command.<name>` true): API-blocked (GAPS_UPSTREAM, new line).
 - [ ] Handler default and `Nobody`: behind `horizon_handler_default` (off) and the PRs horizon-rust/horizon#18755 and #18754.
-- [ ] Vault, the PlaceholderAPI expansion, the LuckPerms API for other mods: not ported.
+- [x] Vault (services `vault:permission` and `vault:chat`), the PlaceholderAPI expansion (`luckperms:placeholder`): ported in round 6.
 
 API-blocked items with a branch or PR: #18754 (`Nobody`) and #18755 (declared default to the handler) (+2 with our PRs).
 API-blocked items without one: verbose command (`run_command_as_player_sync`), granted vanilla commands (new GAPS line).

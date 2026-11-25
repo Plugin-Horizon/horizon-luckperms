@@ -86,7 +86,7 @@ enum Job {
     Login { uuid: u128, name: String },
     /// Loads the player's data before they are placed; `done` gets the answer on the worker thread.
     PreLogin { uuid: u128, name: String, done: PreLoginDone },
-    Command { sender: CommandSender, args: Vec<String> },
+    Command { sender: CommandSender, args: Vec<String>, silent: bool },
     SyncAll { push: bool },
     /// A frame the web editor sent over its live socket (see `editorsocket`).
     SocketFrame { owner: u128, generation: u64, text: String },
@@ -113,6 +113,8 @@ pub struct Runtime {
     worker: Mutex<Option<std::thread::JoinHandle<()>>>,
     storage_name: &'static str,
     messaging: AtomicBool,
+    /// `commands-rate-limit`: when each player's last accepted `/lp` ran.
+    rate: Mutex<HashMap<u128, Instant>>,
 }
 
 fn slot() -> &'static RwLock<Option<Arc<Runtime>>> {
@@ -139,6 +141,7 @@ const CONFIGURATION_CALCULATOR: &str = "me.lucko.luckperms.common.context.calcul
 pub fn start(cfg: Config, mut storage: Box<dyn Storage>, level_name: &str) -> Result<Arc<Runtime>, String> {
     stop();
     context::set_satisfy_all_values(cfg.context_satisfy_all);
+    crate::horizon_luckperms_core::model::set_group_name_rewrites(&cfg.group_name_rewrite);
     storage.init()?;
     let mut model = Model::default();
     for g in storage.load_all_groups()? {
@@ -185,6 +188,7 @@ pub fn start(cfg: Config, mut storage: Box<dyn Storage>, level_name: &str) -> Re
         worker: Mutex::new(None),
         storage_name: storage.name(),
         messaging: AtomicBool::new(messaging),
+        rate: Mutex::new(HashMap::new()),
     });
     let w = rt.clone();
     let handle = std::thread::Builder::new()
@@ -222,6 +226,7 @@ pub fn detached(cfg: Config, model: Model) -> Runtime {
         worker: Mutex::new(None),
         storage_name: "memory",
         messaging: AtomicBool::new(false),
+        rate: Mutex::new(HashMap::new()),
     }
 }
 
@@ -529,8 +534,34 @@ impl Runtime {
 
     /// Runs `/lp <args>` on the worker; the answer arrives through the outbox.
     pub fn submit_command(&self, sender: CommandSender, line: &str) {
+        if self.rate_limited(&sender) {
+            log(&format!("Player '{}' is spamming LuckPerms commands. Ignoring further inputs.", crate::horizon_luckperms_core::uuid::format(sender.uuid)));
+            return;
+        }
         let args = crate::horizon_luckperms_core::text::split_args(line);
-        self.send(Job::Command { sender, args });
+        self.send(Job::Command { sender, args, silent: false });
+    }
+
+    /// `CommandManager.executeCommand`'s rate limit (`commands-rate-limit`): a player's command within 500 ms of
+    /// their last accepted one is dropped (an expiring set: a refused try does not renew the entry). The console
+    /// is never limited.
+    fn rate_limited(&self, sender: &CommandSender) -> bool {
+        if sender.console || sender.uuid == crate::horizon_luckperms_core::uuid::CONSOLE || !self.config().commands_rate_limit {
+            return false;
+        }
+        let now = Instant::now();
+        let mut map = self.rate.lock().unwrap_or_else(|e| e.into_inner());
+        map.retain(|_, t| now.duration_since(*t) < Duration::from_millis(500));
+        if map.contains_key(&sender.uuid) {
+            return true;
+        }
+        map.insert(sender.uuid, now);
+        false
+    }
+
+    /// Runs `/lp <args>` without answering anyone: what the Vault provider uses for its writes.
+    pub fn submit_silent(&self, sender: CommandSender, args: Vec<String>) {
+        self.send(Job::Command { sender, args, silent: true });
     }
 
     pub fn reload_config(&self, cfg: Config) {
@@ -628,8 +659,11 @@ impl Worker {
                     done(Err(PRE_LOGIN_REFUSAL.to_owned()));
                 }
             },
-            Job::Command { sender, args } => {
-                let out = command::execute(&self.rt, self.storage.as_mut(), &sender, &args);
+            Job::Command { sender, args, silent } => {
+                let mut out = command::execute(&self.rt, self.storage.as_mut(), &sender, &args);
+                if silent {
+                    out.lines.clear();
+                }
                 self.finish(&sender, out);
             }
             Job::SocketFrame { owner, generation, text } => {
@@ -646,6 +680,7 @@ impl Worker {
             Job::ReloadConfig(cfg) => {
                 self.rt.messaging.store((cfg.sql_messaging() && self.storage.sql_messenger()) || self.messenger.is_some(), Ordering::Relaxed);
                 context::set_satisfy_all_values(cfg.context_satisfy_all);
+                crate::horizon_luckperms_core::model::set_group_name_rewrites(&cfg.group_name_rewrite);
                 if let Ok(mut c) = self.rt.cfg.write() {
                     *c = Arc::new(cfg);
                 }
@@ -1002,6 +1037,23 @@ mod pre_login_tests {
         let rt = Arc::new(detached(cfg, Model::default()));
         let w = Worker::new(rt.clone(), Box::new(storage), -1);
         (rt, w)
+    }
+
+    #[test]
+    fn commands_rate_limit_drops_a_second_command_within_500_ms() {
+        let (rt, _w) = worker(MemoryStorage::default());
+        let alice = CommandSender { uuid: 0xa11ce, name: "Alice".into(), console: false };
+        assert!(!rt.rate_limited(&alice));
+        assert!(rt.rate_limited(&alice), "a second command at once is dropped");
+        assert!(!rt.rate_limited(&CommandSender::console()));
+        assert!(!rt.rate_limited(&CommandSender::console()), "the console is never limited");
+        std::thread::sleep(Duration::from_millis(550));
+        assert!(!rt.rate_limited(&alice), "the entry expired");
+        let mut cfg = (*rt.config()).clone();
+        cfg.commands_rate_limit = false;
+        *rt.cfg.write().unwrap() = Arc::new(cfg);
+        assert!(!rt.rate_limited(&alice));
+        assert!(!rt.rate_limited(&alice), "off: no limit");
     }
 
     #[test]

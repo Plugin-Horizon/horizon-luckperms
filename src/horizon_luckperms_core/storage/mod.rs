@@ -11,6 +11,8 @@ pub mod factory;
 pub mod file;
 pub mod formats;
 mod rows;
+#[cfg(feature = "net")]
+pub mod rest;
 pub mod split;
 #[cfg(feature = "mysql")]
 pub mod sql;

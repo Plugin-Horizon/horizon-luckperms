@@ -462,11 +462,16 @@ impl Hooks for Mod {
     }
 
     fn mod_service_call(&self, _: &mut dyn ServerHost, event: &mut ModServiceCallEvent<'_>) -> Option<mod_api::PayloadBytes> {
-        if event.service != "luckperms:placeholder" {
-            return None;
-        }
         let text = std::str::from_utf8(&event.payload.0).ok()?;
-        glue::placeholder(text).map(|v| mod_api::PayloadBytes(v.into_bytes()))
+        let reply = match event.service {
+            "luckperms:placeholder" => glue::placeholder(text),
+            // The Vault provider (`LuckPermsVaultPermission` and `LuckPermsVaultChat`): see core/vault.rs.
+            s @ (crate::horizon_luckperms_core::vault::PERMISSION_SERVICE | crate::horizon_luckperms_core::vault::CHAT_SERVICE) => {
+                crate::horizon_luckperms_core::vault::service(s, text)
+            }
+            _ => None,
+        };
+        reply.map(|v| mod_api::PayloadBytes(v.into_bytes()))
     }
 
     fn permission_gather_handler(&self, _: &mut dyn ServerHost, event: &mut PermissionGatherHandlerEvent<'_>) {

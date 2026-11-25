@@ -2,7 +2,7 @@
 //!
 //! Not available, and said so at start with the reason: `h2` (a Java database engine; no Rust implementation
 //! exists among the dependencies native mods may use), `postgresql` and `mongodb` (no PostgreSQL or MongoDB client
-//! among them either; the registry crates a mod may use are the ones `horizon-mod-deps` lists), `rest` and `custom`.
+//! among them either; the registry crates a mod may use are the ones `horizon-mod-deps` lists), and `custom`.
 
 use super::file::{parse_method, FileStorage};
 use super::split::SplitStorage;
@@ -42,7 +42,8 @@ pub fn open_method(cfg: &Config, method: &str) -> Result<Box<dyn Storage>> {
         "h2" => Err("storage method h2 is not available: H2 is a Java database engine and no Rust implementation of it can be used by a mod (use sqlite, a file storage such as yaml or json, mariadb or mysql)".into()),
         "postgresql" => Err("storage method postgresql is not available: no PostgreSQL client is among the dependencies a mod may use (use mariadb, mysql, sqlite or a file storage)".into()),
         "mongodb" => Err("storage method mongodb is not available: no MongoDB client is among the dependencies a mod may use (use mariadb, mysql, sqlite or a file storage)".into()),
-        "rest" | "custom" => Err(format!("storage method {method} is not supported")),
+        "rest" => rest(cfg),
+        "custom" => Err("storage method custom is not available: it is a storage another Java plugin registers through LuckPerms' API, and no such API exists on Horizon".into()),
         other => match parse_method(other) {
             Some((format, combined)) => {
                 if cfg.data_dir.as_os_str().is_empty() {
@@ -50,7 +51,7 @@ pub fn open_method(cfg: &Config, method: &str) -> Result<Box<dyn Storage>> {
                 }
                 Ok(Box::new(FileStorage::new(format, combined, &cfg.data_dir)))
             }
-            None => Err(format!("storage method {other} is not known (mariadb, mysql, sqlite, yaml, json, hocon, toml, their -combined variants, memory)")),
+            None => Err(format!("storage method {other} is not known (mariadb, mysql, sqlite, yaml, json, hocon, toml, their -combined variants, rest, memory)")),
         },
     }
 }
@@ -63,6 +64,16 @@ fn sql(cfg: &Config) -> Result<Box<dyn Storage>> {
 #[cfg(not(feature = "mysql"))]
 fn sql(_cfg: &Config) -> Result<Box<dyn Storage>> {
     Err("built without the mysql feature".into())
+}
+
+#[cfg(feature = "net")]
+fn rest(cfg: &Config) -> Result<Box<dyn Storage>> {
+    Ok(Box::new(super::rest::RestStorage::new(&cfg.storage.rest_url, &cfg.storage.rest_auth_key)?))
+}
+
+#[cfg(not(feature = "net"))]
+fn rest(_cfg: &Config) -> Result<Box<dyn Storage>> {
+    Err("built without the net feature".into())
 }
 
 #[cfg(feature = "sqlite")]
@@ -98,7 +109,8 @@ mod tests {
             let e = open(&cfg(m, &d)).err().unwrap();
             assert!(e.contains(m) && e.contains(why), "{e}");
         }
-        assert!(open(&cfg("rest", &d)).err().unwrap().contains("not supported"));
+        assert!(open(&cfg("custom", &d)).err().unwrap().contains("not available"));
+        assert!(open(&{ let mut c = cfg("rest", &d); c.storage.rest_url = "gopher://x".into(); c }).err().unwrap().contains("http"));
         assert!(open(&cfg("carrier-pigeon", &d)).err().unwrap().contains("not known"));
     }
 
