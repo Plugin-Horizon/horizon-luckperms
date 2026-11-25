@@ -23,6 +23,7 @@ pub mod known;
 pub mod lang;
 pub mod messaging;
 pub mod messenger;
+pub mod messenger_wave2;
 #[cfg(feature = "wire")]
 pub mod netio;
 pub mod model;

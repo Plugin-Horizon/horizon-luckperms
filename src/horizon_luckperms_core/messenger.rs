@@ -30,6 +30,13 @@ pub fn open(cfg: &Config) -> Result<Option<Box<dyn Messenger>>, String> {
     match cfg.messaging() {
         Messaging::Redis => open_redis(cfg).map(Some),
         Messaging::Nats => open_nats(cfg).map(Some),
+        Messaging::PluginMsg => Ok(Some(Box::new(crate::horizon_luckperms_core::messenger_wave2::PluginMessenger))),
+        #[cfg(feature = "wave2")]
+        Messaging::Postgres => crate::horizon_luckperms_core::messenger_wave2::open_postgres(cfg).map(Some),
+        #[cfg(feature = "wave2")]
+        Messaging::Rabbit => crate::horizon_luckperms_core::messenger_wave2::open_rabbitmq(cfg).map(Some),
+        #[cfg(not(feature = "wave2"))]
+        Messaging::Postgres | Messaging::Rabbit => Err("built without the wave2 feature".into()),
         Messaging::Refused(what) => Err(refusal(what)),
         Messaging::Sql | Messaging::Off => Ok(None),
     }
@@ -38,9 +45,9 @@ pub fn open(cfg: &Config) -> Result<Option<Box<dyn Messenger>>, String> {
 /// Why a named service cannot run.
 pub fn refusal(what: &str) -> String {
     match what {
-        "rabbitmq" => "messaging service rabbitmq is not available: no AMQP client is among the dependencies a mod may use".into(),
-        "postgresql" => "messaging service postgresql is not available: no PostgreSQL client is among the dependencies a mod may use".into(),
-        "pluginmsg" => "messaging service pluginmsg is not available: it sends over a player's connection to a relay on the proxy, and a mod's registered payload channels are negotiated with the client, not with a proxy".into(),
+        "rabbitmq" => "messaging service rabbitmq needs the wave2 build (the AMQP client of fam-mod-deps-db-clients)".into(),
+        "postgresql" => "messaging service postgresql needs the wave2 build (the PostgreSQL client of fam-mod-deps-db-clients)".into(),
+        "pluginmsg" => "messaging service pluginmsg needs the wave2 build (the plugin channels of fam-provider-bridges)".into(),
         other => format!("messaging service {other} is not available"),
     }
 }

@@ -1,4 +1,4 @@
-Parity: 100% now (286/286 items of the audit list, round 6; n/a lines are not counted). Older estimate: 76% now / 77% with our PRs / 77% with engine changes / 77% with new SDK (~358/~470 items; estimate from the round 3 count plus this round; items = commands and sub commands, nodes, config keys, messages, features; an item behind an off-by-default feature or a missing engine API counts as not done)
+Parity: 98% now (286/291 items of the audit list; the 5 open ones are wave 2: written behind the cargo feature `wave2`, they need fam-mod-deps-db-clients and fam-provider-bridges; n/a lines are not counted). Older estimate: 76% now / 77% with our PRs / 77% with engine changes / 77% with new SDK (~358/~470 items; estimate from the round 3 count plus this round; items = commands and sub commands, nodes, config keys, messages, features; an item behind an off-by-default feature or a missing engine API counts as not done)
 
 ## Round 100 (blind, not compiled): checklist and closed items
 Closed this round: `/lp export` (file, `--without-users`, `--without-groups`, `--upload`), `/lp import` (file, `--replace`,

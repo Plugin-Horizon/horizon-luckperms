@@ -40,8 +40,8 @@ pub fn open_method(cfg: &Config, method: &str) -> Result<Box<dyn Storage>> {
         }
         "sqlite" => sqlite(cfg),
         "h2" => Err("storage method h2 is not available: H2 is a Java database engine and no Rust implementation of it can be used by a mod (use sqlite, a file storage such as yaml or json, mariadb or mysql)".into()),
-        "postgresql" => Err("storage method postgresql is not available: no PostgreSQL client is among the dependencies a mod may use (use mariadb, mysql, sqlite or a file storage)".into()),
-        "mongodb" => Err("storage method mongodb is not available: no MongoDB client is among the dependencies a mod may use (use mariadb, mysql, sqlite or a file storage)".into()),
+        "postgresql" => postgres(cfg),
+        "mongodb" => mongo(cfg),
         "rest" => rest(cfg),
         "custom" => Err("storage method custom is not available: it is a storage another Java plugin registers through LuckPerms' API, and no such API exists on Horizon".into()),
         other => match parse_method(other) {
@@ -64,6 +64,26 @@ fn sql(cfg: &Config) -> Result<Box<dyn Storage>> {
 #[cfg(not(feature = "mysql"))]
 fn sql(_cfg: &Config) -> Result<Box<dyn Storage>> {
     Err("built without the mysql feature".into())
+}
+
+#[cfg(feature = "wave2")]
+fn postgres(cfg: &Config) -> Result<Box<dyn Storage>> {
+    Ok(Box::new(super::postgres::PostgresStorage::new(&cfg.storage)?))
+}
+
+#[cfg(not(feature = "wave2"))]
+fn postgres(_cfg: &Config) -> Result<Box<dyn Storage>> {
+    Err("storage method postgresql needs the wave2 build (the PostgreSQL client of fam-mod-deps-db-clients; use mariadb, mysql, sqlite or a file storage meanwhile)".into())
+}
+
+#[cfg(feature = "wave2")]
+fn mongo(cfg: &Config) -> Result<Box<dyn Storage>> {
+    Ok(Box::new(super::mongo::MongoStorage::new(&cfg.storage)?))
+}
+
+#[cfg(not(feature = "wave2"))]
+fn mongo(_cfg: &Config) -> Result<Box<dyn Storage>> {
+    Err("storage method mongodb needs the wave2 build (the MongoDB client of fam-mod-deps-db-clients; use mariadb, mysql, sqlite or a file storage meanwhile)".into())
 }
 
 #[cfg(feature = "net")]
@@ -105,7 +125,11 @@ mod tests {
     #[test]
     fn methods_that_cannot_run_say_why() {
         let d = Dir::new();
-        for (m, why) in [("h2", "Java database engine"), ("postgresql", "PostgreSQL client"), ("mongodb", "MongoDB client")] {
+        let mut wanted = vec![("h2", "Java database engine")];
+        if !cfg!(feature = "wave2") {
+            wanted.extend([("postgresql", "PostgreSQL client"), ("mongodb", "MongoDB client")]);
+        }
+        for (m, why) in wanted {
             let e = open(&cfg(m, &d)).err().unwrap();
             assert!(e.contains(m) && e.contains(why), "{e}");
         }

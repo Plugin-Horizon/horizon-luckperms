@@ -19,12 +19,6 @@ pub const CONTEXTS_JSON: &str = "contexts.json";
 /// Keys the port reads on purpose and does not act on, with the reason. The `check_original` report
 /// does not count them as missing. Mirrored in GAPS.md.
 pub const IGNORED: &[(&str, &str)] = &[
-    ("data.mongodb-collection-prefix", "MongoDB storage is not available (no MongoDB driver among the mod dependencies)"),
-    ("data.mongodb-connection-uri", "MongoDB storage is not available (no MongoDB driver among the mod dependencies)"),
-    ("rabbitmq.address", "RabbitMQ messaging is not available (no AMQP client among the mod dependencies)"),
-    ("rabbitmq.vhost", "RabbitMQ messaging is not available (no AMQP client among the mod dependencies)"),
-    ("rabbitmq.username", "RabbitMQ messaging is not available (no AMQP client among the mod dependencies)"),
-    ("rabbitmq.password", "RabbitMQ messaging is not available (no AMQP client among the mod dependencies)"),
     ("apply-bukkit-child-permissions", "Bukkit permission attachments do not exist on Horizon"),
     ("apply-bukkit-attachment-permissions", "Bukkit permission attachments do not exist on Horizon"),
     ("apply-sponge-implicit-wildcards", "Sponge only"),
@@ -279,6 +273,24 @@ pub fn config_from_yaml(text: &str, reads: &mut Reads) -> Result<Config, String>
         }
         set!(k, "nats.ssl", c.nats.ssl);
         set!(k, "rabbitmq.enabled", c.rabbitmq.enabled);
+        if let Some(v) = k.text("rabbitmq.address") {
+            c.rabbitmq.address = v;
+        }
+        if let Some(v) = k.text("rabbitmq.vhost") {
+            c.rabbitmq.vhost = v;
+        }
+        if let Some(v) = k.text("rabbitmq.username") {
+            c.rabbitmq.username = v;
+        }
+        if let Some(v) = k.text("rabbitmq.password") {
+            c.rabbitmq.password = v;
+        }
+        if let Some(v) = k.text("data.mongodb-collection-prefix") {
+            c.storage.mongodb_collection_prefix = v;
+        }
+        if let Some(v) = k.text("data.mongodb-connection-uri") {
+            c.storage.mongodb_connection_uri = v;
+        }
         if let Some(m) = c.messenger_refused() {
             notes.push(format!("messaging-service: {m} is not supported (messaging off)"));
         }

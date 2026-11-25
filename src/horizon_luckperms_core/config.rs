@@ -172,6 +172,10 @@ pub struct Storage {
     pub rest_url: String,
     /// `data.rest-auth-key`: sent as a Bearer token when not empty.
     pub rest_auth_key: String,
+    /// `data.mongodb-collection-prefix`.
+    pub mongodb_collection_prefix: String,
+    /// `data.mongodb-connection-uri`: used instead of address and credentials when not empty.
+    pub mongodb_connection_uri: String,
 }
 
 
@@ -271,10 +275,28 @@ impl Default for Nats {
     }
 }
 
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Deserialize)]
 #[serde(default, rename_all = "kebab-case")]
 pub struct RabbitMq {
     pub enabled: bool,
+    /// `host[:port]` (5672).
+    pub address: String,
+    pub vhost: String,
+    pub username: String,
+    pub password: String,
+}
+
+// Credentials never reach a log through `{:?}`.
+impl fmt::Debug for RabbitMq {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("RabbitMq").field("enabled", &self.enabled).finish_non_exhaustive()
+    }
+}
+
+impl Default for RabbitMq {
+    fn default() -> Self {
+        RabbitMq { enabled: false, address: "localhost".into(), vhost: "/".into(), username: "guest".into(), password: "guest".into() }
+    }
 }
 
 // Credentials never reach a log through `{:?}`.
@@ -303,7 +325,11 @@ pub enum Messaging {
     Sql,
     Redis,
     Nats,
-    /// A service that is named but cannot run here: `rabbitmq`, `postgresql`, `pluginmsg`.
+    /// Wave 2 (cargo feature `wave2`): AMQP, LISTEN/NOTIFY and plugin messages.
+    Rabbit,
+    Postgres,
+    PluginMsg,
+    /// A service that is named but cannot run in this build: `rabbitmq`, `postgresql`, `pluginmsg` without `wave2`.
     Refused(&'static str),
 }
 
@@ -406,6 +432,8 @@ impl Default for Storage {
             pool_properties: BTreeMap::new(),
             rest_url: "http://localhost:8080/".into(),
             rest_auth_key: String::new(),
+            mongodb_collection_prefix: String::new(),
+            mongodb_connection_uri: String::new(),
         }
     }
 }
@@ -532,9 +560,9 @@ impl Config {
         match kind.as_str() {
             "redis" if self.redis.enabled => Messaging::Redis,
             "nats" if self.nats.enabled => Messaging::Nats,
-            "rabbitmq" if self.rabbitmq.enabled => Messaging::Refused("rabbitmq"),
-            "pluginmsg" | "bungee" | "velocity" => Messaging::Refused("pluginmsg"),
-            "postgresql" => Messaging::Refused("postgresql"),
+            "rabbitmq" if self.rabbitmq.enabled => if cfg!(feature = "wave2") { Messaging::Rabbit } else { Messaging::Refused("rabbitmq") },
+            "pluginmsg" | "bungee" | "velocity" => if cfg!(feature = "wave2") { Messaging::PluginMsg } else { Messaging::Refused("pluginmsg") },
+            "postgresql" => if cfg!(feature = "wave2") { Messaging::Postgres } else { Messaging::Refused("postgresql") },
             "sql" => Messaging::Sql,
             _ => Messaging::Off,
         }
