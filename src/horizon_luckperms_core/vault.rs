@@ -511,7 +511,6 @@ impl<'a> Vault<'a> {
         let world = arg(0);
         let player = || self.lookup_uuid(arg(1)?);
         let b = |v: bool| Some(v.to_string());
-        let opt = |s: Option<&str>| s.filter(|v| !v.is_empty());
         match service {
             PERMISSION_SERVICE => match method {
                 "name" => Some(NAME.to_owned()),
@@ -574,6 +573,10 @@ impl<'a> Vault<'a> {
             _ => None,
         }
     }
+}
+
+fn opt(s: Option<&str>) -> Option<&str> {
+    s.filter(|v| !v.is_empty())
 }
 
 /// `call_mod_service` for `vault:permission` and `vault:chat`; None while no service runs or for another service.

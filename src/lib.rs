@@ -529,7 +529,6 @@ impl Hooks for Mod {
             mod_api::NodeDefault::Level(l) => glue::DeclaredDefault::Level(l.level()),
             mod_api::NodeDefault::Value(mod_api::PermissionValue::Boolean(true)) => glue::DeclaredDefault::Everyone,
             mod_api::NodeDefault::Nobody | mod_api::NodeDefault::Value(_) => glue::DeclaredDefault::Nobody,
-            _ => glue::DeclaredDefault::Level(1),
         };
         let answer =
             glue::handler_answer_declared(event.uuid, &event.node.name, event.online.is_some(), level, declared);
