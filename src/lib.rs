@@ -120,14 +120,14 @@ fn online(host: &dyn ServerHost) -> Vec<OnlinePlayer> {
 
 /// `resolve-command-selectors`: an `@...` word of a typed `/lp` line becomes the name of the one player it selects.
 fn resolve_selectors(host: &mut dyn ServerHost, player: u128, line: &str) -> String {
-    if !glue::resolve_selectors() || !line.contains('@') || !line.trim_start_matches('/').starts_with(ROOTS_PREFIX_CHECK) {
+    if !glue::resolve_selectors() || !line.contains('@') || !ROOTS_PREFIX_CHECK.iter().any(|r| line.trim_start_matches('/').split(' ').next() == Some(*r)) {
         return line.to_owned();
     }
     let Some(sender) = host.player(player) else { return line.to_owned() };
     let mut out = Vec::new();
     for word in line.split(' ') {
         if word.starts_with('@') {
-            if let Some(found) = host.player_select_entities(sender, word) {
+            if let Some(found) = sender.select_entities(host, word) {
                 let names: Vec<String> = found
                     .into_iter()
                     .filter_map(|e| host.players().server_players().into_iter().find(|p| p.entity() == e))
@@ -261,9 +261,10 @@ impl Hooks for Mod {
                 for p in list {
                     let want = glue::permission(p.uuid, "luckperms.autoop") == Some(true);
                     if want != (p.op_level > 0) {
+                        #[cfg(feature = "next-engine")]
                         if let Some(handle) = host.player(p.uuid) {
                             let level = if want { PermissionLevel::Owners } else { PermissionLevel::All };
-                            let _ = handle.set_op_level(host, level);
+                            let _ = host.player_set_op_level(handle, level);
                         }
                     }
                 }
@@ -415,7 +416,7 @@ impl Hooks for Mod {
         // list, since the list may leave them out while the server is busy with this command.
         let players = online(&*host);
         if players.iter().any(|p| p.uuid == event.player) {
-            glue::players(players);
+            glue::players(players.clone());
         }
         // A typed command whose node minecraft.command.<name> is false is refused, with the answer as a reply.
         // The level argument is not used by the core's gate.
@@ -444,12 +445,12 @@ impl Hooks for Mod {
         glue::filter_tree(event.player, event.names);
     }
 
-    fn mod_service_call(&self, _: &mut dyn ServerHost, event: &mut ModServiceCallEvent<'_>) -> Option<Vec<u8>> {
+    fn mod_service_call(&self, _: &mut dyn ServerHost, event: &mut ModServiceCallEvent<'_>) -> Option<mod_api::PayloadBytes> {
         if event.service != "luckperms:placeholder" {
             return None;
         }
-        let text = std::str::from_utf8(event.payload).ok()?;
-        glue::placeholder(text).map(String::into_bytes)
+        let text = std::str::from_utf8(&event.payload.0).ok()?;
+        glue::placeholder(text).map(|v| mod_api::PayloadBytes(v.into_bytes()))
     }
 
     fn permission_gather_handler(&self, _: &mut dyn ServerHost, event: &mut PermissionGatherHandlerEvent<'_>) {
