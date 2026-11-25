@@ -4,8 +4,10 @@
 # The "server" context of this server. "global" adds none (permissions set without a server apply).
 server = "global"
 
-# "sql" polls the {prefix}messenger table every second, as LuckPerms' SQL messenger does.
-# "auto" picks it with MariaDB/MySQL storage; "none" turns it off.
+# The messaging service that keeps servers in step. "auto" picks Redis, NATS (when enabled below), else the SQL
+# messenger with MariaDB/MySQL storage; "sql" polls the {prefix}messenger table every second; "redis" and "nats" use
+# the sections below; "notsql" turns messaging off ("none" means "auto", as in LuckPerms). RabbitMQ, PostgreSQL and
+# "pluginmsg" cannot run on Horizon.
 messaging-service = "auto"
 # A full reload from the database every N minutes; -1 never (the messenger keeps servers in step).
 sync-minutes = -1
@@ -41,6 +43,8 @@ disabled-contexts = []
 # never IP addresses) is uploaded to bytebin and opened at web-editor-url.
 bytebin-url = "https://usercontent.luckperms.net/"
 web-editor-url = "https://luckperms.net/editor/"
+# The service the editor's live connection runs on (the editor then applies its changes without `/lp applyedits`).
+bytesocks-url = "https://usersockets.luckperms.net/"
 # Where `/lp verbose upload` and `/lp tree` results are opened (the bytebin key is appended).
 verbose-viewer-url = "https://luckperms.net/verbose/"
 tree-viewer-url = "https://luckperms.net/treeview/"
@@ -50,8 +54,10 @@ skip-bulkupdate-confirmation = false
 
 
 [storage]
-# "mariadb" or "mysql" (the service starts once the password below is filled in); "memory" keeps everything
-# in RAM and loses it at every restart (testing only, nothing is shared).
+# "mariadb" or "mysql" (the service starts once the password below is filled in); "sqlite" (the file
+# luckperms-sqlite.db next to this config); "yaml", "json", "hocon", "toml" (one file per user, group and track in
+# <method>-storage/) and their "-combined" variants (one file per kind); "memory" keeps everything in RAM and loses
+# it at every restart (testing only, nothing is shared). "h2", "postgresql" and "mongodb" cannot run on Horizon.
 method = "mariadb"
 address = "localhost:3306"
 database = "minecraft"
@@ -63,6 +69,42 @@ maximum-pool-size = 4
 minimum-idle = 1
 connection-timeout-ms = 5000
 use-ssl = false
+
+# Split storage: a different storage for each kind of data (the methods default to h2, which cannot run here).
+[split-storage]
+enabled = false
+[split-storage.methods]
+user = "mariadb"
+group = "mariadb"
+track = "mariadb"
+uuid = "mariadb"
+log = "mariadb"
+
+# Redis messaging. address is host:port (6379 by default, IPv6 in brackets); with a cluster, `addresses` lists the nodes.
+[redis]
+enabled = false
+address = ""
+addresses = []
+username = ""
+# Fill in by hand. Never commit it.
+password = ""
+ssl = false
+
+[redis.sentinel]
+enabled = false
+master = "mymaster"
+addresses = []
+username = ""
+password = ""
+
+# NATS messaging: address is host:port (4222 by default). Log in with username and password, or with a token.
+[nats]
+enabled = false
+address = ""
+username = ""
+password = ""
+token = ""
+ssl = false
 
 [meta-formatting.prefix]
 format = ["highest"]

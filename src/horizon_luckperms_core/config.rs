@@ -5,6 +5,8 @@
 use crate::horizon_luckperms_core::model::TempMerge;
 use serde::Deserialize;
 use std::collections::BTreeMap;
+use std::fmt;
+use std::path::PathBuf;
 
 pub const FILE_NAME: &str = "luckperms.toml";
 
@@ -14,8 +16,17 @@ pub struct Config {
     /// The `server` context of this server; `global` adds none.
     pub server: String,
     pub storage: Storage,
-    /// `sql` (the `{prefix}messenger` table), `auto` (the same with SQL storage) or `none`.
+    /// `split-storage`: user, group, track, uuid and log data in different storages.
+    pub split_storage: SplitStorage,
+    /// `auto`, `sql`, `redis`, `nats`, `rabbitmq`, `pluginmsg`, `notsql`, `custom` or `none` (LuckPerms reads `none` as
+    /// `auto`). `auto` picks Redis, RabbitMQ or NATS when one is enabled, else SQL with MariaDB/MySQL storage.
     pub messaging_service: String,
+    /// `redis.*`
+    pub redis: Redis,
+    /// `nats.*`
+    pub nats: Nats,
+    /// `rabbitmq.enabled` (the rest of `rabbitmq.*` is only read: that messenger needs an AMQP client).
+    pub rabbitmq: RabbitMq,
     /// Full resync from storage every N minutes; -1 never.
     pub sync_minutes: i64,
     pub auto_push_updates: bool,
@@ -75,10 +86,10 @@ pub struct Config {
     pub resolve_command_selectors: bool,
     /// `watch-files`: a saved config is reloaded within a second (on by default).
     pub watch_files: bool,
-    /// The non-SQL messenger the original file would use (`redis`, `nats`, `rabbitmq`): the port does not
-    /// speak those, so messaging stays off. Set by the original-file reader only.
+    /// The directory the file storages and the SQLite file live in (`plugins/LuckPerms/` for the original
+    /// config, the mod's config directory otherwise). Set by the loader.
     #[serde(skip)]
-    pub messenger_refused: Option<String>,
+    pub data_dir: PathBuf,
     /// Settings of the original file this port reads but does not act on, as key paths with the value
     /// (no values of secrets). Logged once at start. Set by the original-file reader only.
     #[serde(skip)]
@@ -87,6 +98,8 @@ pub struct Config {
     pub bytebin_url: String,
     /// `web-editor-url`: the editor's address; the bytebin key is appended.
     pub web_editor_url: String,
+    /// `bytesocks-url`: the service the web editor's live connection runs on (`/lp trusteditor`).
+    pub bytesocks_url: String,
     /// `verbose-viewer-url`: the verbose viewer's address; the bytebin key is appended.
     pub verbose_viewer_url: String,
     /// `tree-viewer-url`: the permission tree viewer's address; the bytebin key is appended.
@@ -135,6 +148,139 @@ pub struct Storage {
     /// `pool-settings.properties` (`useUnicode`, `characterEncoding`). Read but not applied: the port always
     /// connects as utf8mb4, a superset of the original utf8.
     pub pool_properties: BTreeMap<String, String>,
+}
+
+
+/// `split-storage`: which storage holds which data. The methods default to `h2`, as in LuckPerms.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(default, rename_all = "kebab-case")]
+pub struct SplitStorage {
+    pub enabled: bool,
+    pub methods: SplitMethods,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(default, rename_all = "kebab-case")]
+pub struct SplitMethods {
+    pub user: String,
+    pub group: String,
+    pub track: String,
+    pub uuid: String,
+    pub log: String,
+}
+
+impl Default for SplitStorage {
+    fn default() -> Self {
+        SplitStorage { enabled: false, methods: SplitMethods::default() }
+    }
+}
+
+impl Default for SplitMethods {
+    fn default() -> Self {
+        let h2 = || "h2".to_owned();
+        SplitMethods { user: h2(), group: h2(), track: h2(), uuid: h2(), log: h2() }
+    }
+}
+
+/// `redis.sentinel.*`
+#[derive(Clone, Deserialize)]
+#[serde(default, rename_all = "kebab-case")]
+pub struct Sentinel {
+    pub enabled: bool,
+    pub master: String,
+    pub addresses: Vec<String>,
+    pub username: String,
+    pub password: String,
+}
+
+impl Default for Sentinel {
+    fn default() -> Self {
+        Sentinel { enabled: false, master: "mymaster".into(), addresses: Vec::new(), username: String::new(), password: String::new() }
+    }
+}
+
+/// `redis.*`
+#[derive(Clone, Deserialize)]
+#[serde(default, rename_all = "kebab-case")]
+pub struct Redis {
+    pub enabled: bool,
+    /// `host:port`, port 6379 when left out; IPv6 hosts in brackets.
+    pub address: String,
+    /// A Redis cluster's nodes. Pub/sub reaches every node of a cluster, so the first node is used.
+    pub addresses: Vec<String>,
+    pub username: String,
+    pub password: String,
+    pub ssl: bool,
+    pub sentinel: Sentinel,
+}
+
+impl Default for Redis {
+    fn default() -> Self {
+        Redis {
+            enabled: false,
+            address: String::new(),
+            addresses: Vec::new(),
+            username: String::new(),
+            password: String::new(),
+            ssl: false,
+            sentinel: Sentinel::default(),
+        }
+    }
+}
+
+/// `nats.*`
+#[derive(Clone, Deserialize)]
+#[serde(default, rename_all = "kebab-case")]
+pub struct Nats {
+    pub enabled: bool,
+    /// `host:port`, port 4222 when left out.
+    pub address: String,
+    pub username: String,
+    pub password: String,
+    pub token: String,
+    pub ssl: bool,
+}
+
+impl Default for Nats {
+    fn default() -> Self {
+        Nats { enabled: false, address: String::new(), username: String::new(), password: String::new(), token: String::new(), ssl: false }
+    }
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(default, rename_all = "kebab-case")]
+pub struct RabbitMq {
+    pub enabled: bool,
+}
+
+// Credentials never reach a log through `{:?}`.
+impl fmt::Debug for Sentinel {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Sentinel").field("enabled", &self.enabled).field("master", &self.master).finish_non_exhaustive()
+    }
+}
+impl fmt::Debug for Redis {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Redis").field("enabled", &self.enabled).field("ssl", &self.ssl).finish_non_exhaustive()
+    }
+}
+impl fmt::Debug for Nats {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Nats").field("enabled", &self.enabled).field("ssl", &self.ssl).finish_non_exhaustive()
+    }
+}
+
+/// The messenger a config selects (`MessagingFactory.getInstance`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Messaging {
+    /// No messaging service.
+    Off,
+    /// The `{prefix}messenger` table of a MariaDB/MySQL storage.
+    Sql,
+    Redis,
+    Nats,
+    /// A service that is named but cannot run here: `rabbitmq`, `postgresql`, `pluginmsg`.
+    Refused(&'static str),
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -243,7 +389,11 @@ impl Default for Config {
         Config {
             server: "global".into(),
             storage: Storage::default(),
+            split_storage: SplitStorage::default(),
             messaging_service: "auto".into(),
+            redis: Redis::default(),
+            nats: Nats::default(),
+            rabbitmq: RabbitMq::default(),
             sync_minutes: -1,
             auto_push_updates: true,
             push_log_entries: true,
@@ -280,10 +430,11 @@ impl Default for Config {
             meta_value_selection_default: "inheritance".into(),
             meta_value_selection: BTreeMap::new(),
             watch_files: true,
-            messenger_refused: None,
+            data_dir: PathBuf::new(),
             unsupported: Vec::new(),
             bytebin_url: "https://usercontent.luckperms.net/".into(),
             web_editor_url: "https://luckperms.net/editor/".into(),
+            bytesocks_url: "https://usersockets.luckperms.net/".into(),
             verbose_viewer_url: "https://luckperms.net/verbose/".into(),
             tree_viewer_url: "https://luckperms.net/treeview/".into(),
             disable_bulkupdate: false,
@@ -310,16 +461,60 @@ impl Config {
         Ok(c)
     }
 
-    /// Whether the SQL messenger runs (`messaging-service: auto` picks it with SQL storage).
+    /// The storage methods in use: the five split methods, or the one `storage-method`.
+    pub fn storage_methods(&self) -> Vec<String> {
+        let m = &self.split_storage.methods;
+        if self.split_storage.enabled {
+            [&m.user, &m.group, &m.track, &m.uuid, &m.log].iter().map(|s| s.trim().to_lowercase()).collect()
+        } else {
+            vec![self.storage.method.trim().to_lowercase()]
+        }
+    }
+
+    /// `MessagingFactory.getInstance`: the messenger the config selects.
+    pub fn messaging(&self) -> Messaging {
+        let mut kind = self.messaging_service.trim().to_lowercase();
+        if kind == "none" {
+            kind = "auto".into();
+        }
+        let methods = self.storage_methods();
+        if kind == "auto" {
+            kind = if self.redis.enabled {
+                "redis".into()
+            } else if self.rabbitmq.enabled {
+                "rabbitmq".into()
+            } else if self.nats.enabled {
+                "nats".into()
+            } else if methods.iter().any(|m| matches!(m.as_str(), "mariadb" | "mysql")) {
+                "sql".into()
+            } else if methods.iter().any(|m| m == "postgresql") {
+                "postgresql".into()
+            } else {
+                "auto".into()
+            };
+        }
+        match kind.as_str() {
+            "redis" if self.redis.enabled => Messaging::Redis,
+            "nats" if self.nats.enabled => Messaging::Nats,
+            "rabbitmq" if self.rabbitmq.enabled => Messaging::Refused("rabbitmq"),
+            "pluginmsg" | "bungee" | "velocity" => Messaging::Refused("pluginmsg"),
+            "postgresql" => Messaging::Refused("postgresql"),
+            "sql" => Messaging::Sql,
+            _ => Messaging::Off,
+        }
+    }
+
+    /// The service that was asked for and cannot run here (`rabbitmq`, `postgresql`, `pluginmsg`).
+    pub fn messenger_refused(&self) -> Option<&'static str> {
+        match self.messaging() {
+            Messaging::Refused(n) => Some(n),
+            _ => None,
+        }
+    }
+
+    /// Whether the SQL messenger runs (`messaging-service: auto` picks it with MariaDB/MySQL storage).
     pub fn sql_messaging(&self) -> bool {
-        if self.messenger_refused.is_some() {
-            return false;
-        }
-        match self.messaging_service.to_lowercase().as_str() {
-            "sql" => true,
-            "auto" => matches!(self.storage.method.to_lowercase().as_str(), "mariadb" | "mysql"),
-            _ => false,
-        }
+        self.messaging() == Messaging::Sql
     }
 
     pub fn global_flags(&self) -> crate::horizon_luckperms_core::context::GlobalFlags {
@@ -392,6 +587,46 @@ mod tests {
         assert!(!Config::parse(&mem).expect("memory variant parses").sql_messaging());
         assert_eq!(c.temporary_add_behaviour, TempMerge::Deny);
         assert_eq!(c.meta_formatting.prefix.format, vec!["highest".to_string()]);
+    }
+
+    #[test]
+    fn redis_nats_and_split_storage_sections_parse() {
+        let c = Config::parse(
+            "messaging-service = \"auto\"\n[redis]\nenabled = true\naddress = \"r.example:6380\"\npassword = \"not-real\"\n[redis.sentinel]\nenabled = true\nmaster = \"m\"\naddresses = [\"s.example\"]\n[nats]\nenabled = true\naddress = \"n.example\"\ntoken = \"t\"\n[split-storage]\nenabled = true\n[split-storage.methods]\nuser = \"yaml\"\nuuid = \"sqlite\"\n",
+        )
+        .unwrap();
+        assert_eq!(c.messaging(), Messaging::Redis, "auto prefers Redis over NATS and SQL");
+        assert_eq!((c.redis.address.as_str(), c.redis.password.as_str()), ("r.example:6380", "not-real"));
+        assert!(c.redis.sentinel.enabled && c.redis.sentinel.addresses == ["s.example"]);
+        assert_eq!(c.nats.token, "t");
+        assert_eq!(c.storage_methods(), vec!["yaml", "h2", "h2", "sqlite", "h2"]);
+        assert!(!format!("{c:?}").contains("not-real"), "no password in Debug output");
+        // The shipped example has the sections and keeps them off.
+        let ex = Config::parse(DEFAULT_TOML).unwrap();
+        assert!(!ex.redis.enabled && !ex.nats.enabled && !ex.split_storage.enabled && !ex.redis.sentinel.enabled);
+        assert_eq!(ex.bytesocks_url, "https://usersockets.luckperms.net/");
+        assert_eq!(ex.messaging(), Messaging::Sql);
+    }
+
+    #[test]
+    fn messaging_choices() {
+        let mut c = Config::default();
+        assert_eq!(c.messaging(), Messaging::Sql);
+        c.storage.method = "sqlite".into();
+        assert_eq!(c.messaging(), Messaging::Off, "SQLite cannot carry the SQL messenger");
+        c.messaging_service = "sql".into();
+        assert_eq!(c.messaging(), Messaging::Sql, "an explicit sql is tried (the runtime refuses it without a MariaDB storage)");
+        c.messaging_service = "notsql".into();
+        assert_eq!(c.messaging(), Messaging::Off);
+        c.messaging_service = "custom".into();
+        assert_eq!(c.messaging(), Messaging::Off);
+        c.messaging_service = "Redis".into();
+        c.redis.enabled = true;
+        assert_eq!(c.messaging(), Messaging::Redis);
+        c.messaging_service = "nats".into();
+        assert_eq!(c.messaging(), Messaging::Off, "named, but not enabled");
+        c.nats.enabled = true;
+        assert_eq!(c.messaging(), Messaging::Nats);
     }
 
     #[test]

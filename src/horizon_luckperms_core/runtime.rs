@@ -8,9 +8,10 @@
 use crate::horizon_luckperms_core::actionlog::Action;
 use crate::horizon_luckperms_core::calc::{self, HolderRef, Resolved, Tristate};
 use crate::horizon_luckperms_core::command::{self, CmdOutput};
-use crate::horizon_luckperms_core::config::Config;
+use crate::horizon_luckperms_core::config::{Config, Messaging};
 use crate::horizon_luckperms_core::context::{self, ContextSet};
 use crate::horizon_luckperms_core::messaging::{Message, SeenIds, UpdateBuffer};
+use crate::horizon_luckperms_core::messenger::{self, Messenger};
 use crate::horizon_luckperms_core::model::{Model, User};
 use crate::horizon_luckperms_core::storage::Storage;
 use std::collections::{HashMap, HashSet};
@@ -87,6 +88,8 @@ enum Job {
     PreLogin { uuid: u128, name: String, done: PreLoginDone },
     Command { sender: CommandSender, args: Vec<String> },
     SyncAll { push: bool },
+    /// A frame the web editor sent over its live socket (see `editorsocket`).
+    SocketFrame { owner: u128, generation: u64, text: String },
     ReloadConfig(Config),
     Shutdown,
 }
@@ -146,8 +149,23 @@ pub fn start(cfg: Config, mut storage: Box<dyn Storage>, level_name: &str) -> Re
         model.tracks.insert(t.name.clone(), t);
     }
     command::mark_started();
-    let messaging = cfg.sql_messaging();
-    let last_id = if messaging { storage.messenger_init()? } else { -1 };
+    let kind = cfg.messaging();
+    let sql = kind == Messaging::Sql && storage.sql_messenger();
+    if kind == Messaging::Sql && !sql {
+        log(&format!("messaging service sql needs a MariaDB or MySQL storage, not {}; messaging is off", storage.name()));
+    }
+    // Redis and NATS are connected from their own threads; a broker that is down is retried there. A service that
+    // cannot run (RabbitMQ, PostgreSQL, plugin messaging) or is misconfigured is logged and leaves messaging off.
+    let external: Option<Box<dyn Messenger>> = match messenger::open(&cfg) {
+        Ok(m) => m,
+        Err(e) => {
+            log(&format!("messaging is off: {e}"));
+            None
+        }
+    };
+    let messaging = sql || external.is_some();
+    let label = external.as_ref().map(|m| m.name()).or(if sql { Some("sql") } else { None });
+    let last_id = if sql { storage.messenger_init()? } else { -1 };
     let (tx, rx) = mpsc::channel();
     let rt = Arc::new(Runtime {
         cfg: RwLock::new(Arc::new(cfg)),
@@ -168,14 +186,18 @@ pub fn start(cfg: Config, mut storage: Box<dyn Storage>, level_name: &str) -> Re
     let w = rt.clone();
     let handle = std::thread::Builder::new()
         .name("luckperms-worker".into())
-        .spawn(move || Worker::new(w, storage, last_id).run(rx))
+        .spawn(move || {
+            let mut worker = Worker::new(w, storage, last_id);
+            worker.messenger = external;
+            worker.run(rx)
+        })
         .map_err(|e| e.to_string())?;
     *rt.worker.lock().unwrap_or_else(|e| e.into_inner()) = Some(handle);
     if let Ok(mut s) = slot().write() {
         *s = Some(rt.clone());
     }
     let groups = rt.model.read().map(|m| m.groups.len()).unwrap_or(0);
-    log(&format!("loaded {groups} groups from {}; messaging {}", rt.storage_name, if messaging { "sql" } else { "off" }));
+    log(&format!("loaded {groups} groups from {}; messaging {}", rt.storage_name, label.unwrap_or("off")));
     Ok(rt)
 }
 
@@ -491,6 +513,13 @@ impl Runtime {
         self.send(Job::ReloadConfig(cfg));
     }
 
+    /// A frame from the web editor's socket of `owner`, to be handled on the worker thread.
+    pub fn submit_socket_frame(&self, owner: u128, generation: u64, text: String) {
+        if let Some(tx) = self.jobs.lock().unwrap_or_else(|e| e.into_inner()).as_ref() {
+            let _ = tx.send(Job::SocketFrame { owner, generation, text });
+        }
+    }
+
     pub fn request_sync(&self, push: bool) {
         self.send(Job::SyncAll { push });
     }
@@ -505,6 +534,8 @@ impl Runtime {
 struct Worker {
     rt: Arc<Runtime>,
     storage: Box<dyn Storage>,
+    /// Redis or NATS, when the config selects one; otherwise the storage carries the (SQL) messenger.
+    messenger: Option<Box<dyn Messenger>>,
     last_id: i64,
     seen: SeenIds,
     buffer: UpdateBuffer,
@@ -522,6 +553,7 @@ impl Worker {
         Worker {
             rt,
             storage,
+            messenger: None,
             last_id,
             seen: SeenIds::default(),
             buffer: UpdateBuffer::default(),
@@ -539,6 +571,9 @@ impl Worker {
                 Ok(Job::Shutdown) | Err(mpsc::RecvTimeoutError::Disconnected) => {
                     if self.buffer.pending() {
                         self.push(Message::Update { id: crate::horizon_luckperms_core::uuid::random_v4() });
+                    }
+                    if let Some(m) = self.messenger.as_mut() {
+                        m.close();
                     }
                     return;
                 }
@@ -573,6 +608,11 @@ impl Worker {
                 let out = command::execute(&self.rt, self.storage.as_mut(), &sender, &args);
                 self.finish(&sender, out);
             }
+            Job::SocketFrame { owner, generation, text } => {
+                if let Some((sender, out)) = command::socket_frame(&self.rt, self.storage.as_mut(), owner, generation, &text) {
+                    self.finish(&sender, out);
+                }
+            }
             Job::SyncAll { push } => {
                 self.sync_all();
                 if push {
@@ -580,7 +620,7 @@ impl Worker {
                 }
             }
             Job::ReloadConfig(cfg) => {
-                self.rt.messaging.store(cfg.sql_messaging(), Ordering::Relaxed);
+                self.rt.messaging.store((cfg.sql_messaging() && self.storage.sql_messenger()) || self.messenger.is_some(), Ordering::Relaxed);
                 context::set_satisfy_all_values(cfg.context_satisfy_all);
                 if let Ok(mut c) = self.rt.cfg.write() {
                     *c = Arc::new(cfg);
@@ -654,7 +694,12 @@ impl Worker {
             return;
         }
         self.seen.add(msg.id());
-        if let Err(e) = self.storage.messenger_send(&msg.encode()) {
+        let encoded = msg.encode();
+        let sent = match self.messenger.as_mut() {
+            Some(m) => m.send(&encoded),
+            None => self.storage.messenger_send(&encoded),
+        };
+        if let Err(e) = sent {
             log(&format!("messenger send failed: {e}"));
         }
     }
@@ -727,7 +772,13 @@ impl Worker {
 
     fn periodic(&mut self) {
         let cfg = self.rt.config();
-        if self.rt.messaging_on() && self.last_poll.elapsed() >= Duration::from_secs(1) {
+        if self.rt.messaging_on() && self.messenger.is_some() {
+            // The broker's threads queue what arrives; taking it is cheap, so every tick.
+            let received = self.messenger.as_mut().map(|m| m.poll()).unwrap_or_default();
+            for raw in received {
+                self.incoming(&raw, &cfg);
+            }
+        } else if self.rt.messaging_on() && self.last_poll.elapsed() >= Duration::from_secs(1) {
             self.last_poll = Instant::now();
             match self.storage.messenger_poll(self.last_id) {
                 Ok(rows) => {
@@ -739,7 +790,7 @@ impl Worker {
                 Err(e) => log(&format!("messenger poll failed: {e}")),
             }
         }
-        if self.rt.messaging_on() && self.last_housekeep.elapsed() >= Duration::from_secs(30) {
+        if self.rt.messaging_on() && self.messenger.is_none() && self.last_housekeep.elapsed() >= Duration::from_secs(30) {
             self.last_housekeep = Instant::now();
             let _ = self.storage.messenger_housekeep();
         }
@@ -754,6 +805,11 @@ impl Worker {
             self.last_audit = Instant::now();
             self.audit_expired();
             self.unload_left(&cfg);
+            #[cfg(feature = "wire")]
+            {
+                let rt = self.rt.clone();
+                crate::horizon_luckperms_core::editorsocket::tick(&|owner| owner == crate::horizon_luckperms_core::uuid::CONSOLE || rt.online_player(owner).is_some());
+            }
         }
     }
 

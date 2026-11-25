@@ -18,9 +18,24 @@ mysql = { version = "28", default-features = false, features = ["minimal-rust", 
 ureq = { version = "2", default-features = false, features = ["tls"], optional = true }
 flate2 = { version = "1", default-features = false, features = ["rust_backend"], optional = true }
 
+# Redis messaging (pub/sub, TLS, sentinel); the same crate and features husksync uses.
+redis = { version = "1", default-features = false, features = ["tls-rustls", "sentinel"], optional = true }
+# The SQLite storage (SQLite compiled into the mod, as clearlag-cr and huskhomes do).
+rusqlite = { version = "=0.41.1", default-features = false, features = ["bundled", "cache"], optional = true }
+# The web editor's live socket and the NATS messenger: websocket, TLS, the editor's ECDSA keys (as discordsrv and floodgate).
+tungstenite = { version = "0.30", default-features = false, optional = true }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "logging", "tls12"], optional = true }
+webpki-roots = { version = "0.26", optional = true }
+sha1 = { version = "0.10", optional = true }
+base64 = { version = "0.22", optional = true }
+ring = { version = "0.17", optional = true }
 
 [features]
-default = ["mysql", "net"]
+default = ["mysql", "net", "redis", "sqlite", "wire"]
 mysql = ["dep:mysql"]
+redis = ["dep:redis"]
+sqlite = ["dep:rusqlite"]
+# The web editor's live socket (`/lp trusteditor`) and the NATS messenger.
+wire = ["net", "dep:tungstenite", "dep:rustls", "dep:webpki-roots", "dep:sha1", "dep:base64", "dep:ring"]
 # The web editor's HTTP (bytebin).
 net = ["dep:ureq", "dep:flate2"]

@@ -19,24 +19,12 @@ pub const CONTEXTS_JSON: &str = "contexts.json";
 /// Keys the port reads on purpose and does not act on, with the reason. The `check_original` report
 /// does not count them as missing. Mirrored in GAPS.md.
 pub const IGNORED: &[(&str, &str)] = &[
-    ("data.mongodb-collection-prefix", "no MongoDB storage"),
-    ("data.mongodb-connection-uri", "no MongoDB storage"),
-    ("split-storage.methods", "only used with split storage, which is refused when enabled"),
-    ("redis.address", "Redis messenger not spoken; refused when enabled"),
-    ("nats.address", "NATS messenger not spoken; refused when enabled"),
-    ("rabbitmq.address", "RabbitMQ messenger not spoken; refused when enabled"),
-    ("rabbitmq.vhost", "RabbitMQ messenger not spoken; refused when enabled"),
-    ("redis.username", "Redis messenger not spoken; its credentials are not used"),
-    ("redis.password", "Redis messenger not spoken; its credentials are not used"),
-    ("redis.sentinel.enabled", "Redis messenger not spoken; refused when enabled"),
-    ("redis.sentinel.master", "Redis messenger not spoken; its credentials are not used"),
-    ("redis.sentinel.username", "Redis messenger not spoken; its credentials are not used"),
-    ("redis.sentinel.password", "Redis messenger not spoken; its credentials are not used"),
-    ("nats.username", "NATS messenger not spoken; its credentials are not used"),
-    ("nats.password", "NATS messenger not spoken; its credentials are not used"),
-    ("nats.token", "NATS messenger not spoken; its credentials are not used"),
-    ("rabbitmq.username", "RabbitMQ messenger not spoken; its credentials are not used"),
-    ("rabbitmq.password", "RabbitMQ messenger not spoken; its credentials are not used"),
+    ("data.mongodb-collection-prefix", "MongoDB storage is not available (no MongoDB driver among the mod dependencies)"),
+    ("data.mongodb-connection-uri", "MongoDB storage is not available (no MongoDB driver among the mod dependencies)"),
+    ("rabbitmq.address", "RabbitMQ messaging is not available (no AMQP client among the mod dependencies)"),
+    ("rabbitmq.vhost", "RabbitMQ messaging is not available (no AMQP client among the mod dependencies)"),
+    ("rabbitmq.username", "RabbitMQ messaging is not available (no AMQP client among the mod dependencies)"),
+    ("rabbitmq.password", "RabbitMQ messaging is not available (no AMQP client among the mod dependencies)"),
     ("apply-bukkit-child-permissions", "Bukkit permission attachments do not exist on Horizon"),
     ("apply-bukkit-attachment-permissions", "Bukkit permission attachments do not exist on Horizon"),
     ("apply-sponge-implicit-wildcards", "Sponge only"),
@@ -229,29 +217,73 @@ pub fn config_from_yaml(text: &str, reads: &mut Reads) -> Result<Config, String>
         }
         c.storage.pool_properties = k.texts("data.pool-settings.properties");
 
-        // Split storage keeps its data in H2 files that this port does not read.
-        if k.flag("split-storage.enabled") == Some(true) {
-            return Err(format!("{CONFIG_YML}: split-storage is enabled (its H2 files are not read); not started"));
+        // Split storage: which storage holds which data. A method the port cannot run is refused when it opens.
+        set!(k, "split-storage.enabled", c.split_storage.enabled);
+        if let Some(v) = k.text("split-storage.methods.user") {
+            c.split_storage.methods.user = v;
+        }
+        if let Some(v) = k.text("split-storage.methods.group") {
+            c.split_storage.methods.group = v;
+        }
+        if let Some(v) = k.text("split-storage.methods.track") {
+            c.split_storage.methods.track = v;
+        }
+        if let Some(v) = k.text("split-storage.methods.uuid") {
+            c.split_storage.methods.uuid = v;
+        }
+        if let Some(v) = k.text("split-storage.methods.log") {
+            c.split_storage.methods.log = v;
         }
 
-        // Messaging: the SQL messenger is the only one spoken. A non-SQL messenger the original would use
-        // is refused: messaging stays off and the service says so.
-        let service = k.text("messaging-service").unwrap_or_else(|| "auto".into()).trim().to_lowercase();
-        let mut enabled: Vec<&str> = Vec::new();
-        for (name, path) in [("redis", "redis.enabled"), ("nats", "nats.enabled"), ("rabbitmq", "rabbitmq.enabled")] {
-            if k.flag(path) == Some(true) {
-                enabled.push(name);
-            }
+        // Messaging: SQL, Redis and NATS run; RabbitMQ, PostgreSQL and plugin messaging are refused.
+        if let Some(v) = k.text("messaging-service") {
+            c.messaging_service = v.trim().to_lowercase();
         }
-        c.messenger_refused = match service.as_str() {
-            "sql" | "none" => None,
-            "redis" | "nats" | "rabbitmq" => Some(service.clone()),
-            _ => enabled.first().map(|s| s.to_string()),
-        };
-        if let Some(m) = &c.messenger_refused {
+        set!(k, "redis.enabled", c.redis.enabled);
+        if let Some(v) = k.text("redis.address") {
+            c.redis.address = v;
+        }
+        if let Some(v) = k.list("redis.addresses") {
+            c.redis.addresses = v;
+        }
+        if let Some(v) = k.text("redis.username") {
+            c.redis.username = v;
+        }
+        if let Some(v) = k.text("redis.password") {
+            c.redis.password = v;
+        }
+        set!(k, "redis.ssl", c.redis.ssl);
+        set!(k, "redis.sentinel.enabled", c.redis.sentinel.enabled);
+        if let Some(v) = k.text("redis.sentinel.master") {
+            c.redis.sentinel.master = v;
+        }
+        if let Some(v) = k.list("redis.sentinel.addresses") {
+            c.redis.sentinel.addresses = v;
+        }
+        if let Some(v) = k.text("redis.sentinel.username") {
+            c.redis.sentinel.username = v;
+        }
+        if let Some(v) = k.text("redis.sentinel.password") {
+            c.redis.sentinel.password = v;
+        }
+        set!(k, "nats.enabled", c.nats.enabled);
+        if let Some(v) = k.text("nats.address") {
+            c.nats.address = v;
+        }
+        if let Some(v) = k.text("nats.username") {
+            c.nats.username = v;
+        }
+        if let Some(v) = k.text("nats.password") {
+            c.nats.password = v;
+        }
+        if let Some(v) = k.text("nats.token") {
+            c.nats.token = v;
+        }
+        set!(k, "nats.ssl", c.nats.ssl);
+        set!(k, "rabbitmq.enabled", c.rabbitmq.enabled);
+        if let Some(m) = c.messenger_refused() {
             notes.push(format!("messaging-service: {m} is not supported (messaging off)"));
         }
-        c.messaging_service = service;
 
         if let Some(v) = k.number("sync-minutes") {
             c.sync_minutes = v;
@@ -289,6 +321,9 @@ pub fn config_from_yaml(text: &str, reads: &mut Reads) -> Result<Config, String>
         }
         if let Some(v) = k.list("disabled-context-calculators") {
             c.disabled_context_calculators = v;
+        }
+        if let Some(v) = k.text("bytesocks-url") {
+            c.bytesocks_url = v;
         }
         if let Some(v) = k.text("verbose-viewer-url") {
             c.verbose_viewer_url = v;
@@ -556,25 +591,69 @@ auto-op: false
     }
 
     #[test]
-    fn non_sql_messengers_are_refused_not_spoken() {
-        let (c, _) = load("redis:\n  enabled: true\n  address: example.test\n");
-        assert_eq!(c.messenger_refused.as_deref(), Some("redis"));
+    fn messaging_service_follows_the_original_factory() {
+        use crate::horizon_luckperms_core::config::Messaging;
+        // Redis enabled under auto: Redis runs, with the address read.
+        let (c, _) = load("redis:\n  enabled: true\n  address: example.test:6380\n");
+        assert_eq!(c.messaging(), Messaging::Redis);
         assert!(!c.sql_messaging());
-        assert!(c.unsupported.iter().any(|n| n.starts_with("messaging-service: redis")));
+        assert_eq!(c.redis.address, "example.test:6380");
+        // NATS likewise; Redis wins when both are on (auto order: redis, rabbitmq, nats).
+        let (c, _) = load("nats:\n  enabled: true\n  address: example.test\n  token: not-a-token\n");
+        assert_eq!(c.messaging(), Messaging::Nats);
+        assert_eq!(c.nats.token, "not-a-token");
+        let (c, _) = load("redis:\n  enabled: true\nnats:\n  enabled: true\n");
+        assert_eq!(c.messaging(), Messaging::Redis);
+        // RabbitMQ cannot run here: refused, and said so at start.
+        let (c, _) = load("rabbitmq:\n  enabled: true\n");
+        assert_eq!(c.messenger_refused(), Some("rabbitmq"));
+        assert!(c.unsupported.iter().any(|n| n.starts_with("messaging-service: rabbitmq")));
         // An explicit sql service ignores the enabled flags.
         let (c, _) = load("messaging-service: sql\nredis:\n  enabled: true\n");
-        assert_eq!(c.messenger_refused, None);
+        assert_eq!(c.messaging(), Messaging::Sql);
         assert!(c.sql_messaging());
-        // An explicit none stays none.
+        // An explicit service whose flag is off is no service (LuckPerms warns and starts none).
+        let (c, _) = load("messaging-service: redis\n");
+        assert_eq!(c.messaging(), Messaging::Off);
+        // `none` is read as `auto` (MessagingFactory); with SQL storage that is the SQL messenger, `notsql` is off.
         let (c, _) = load("messaging-service: none\n");
-        assert!(!c.sql_messaging());
+        assert_eq!(c.messaging(), Messaging::Sql);
+        let (c, _) = load("messaging-service: notsql\n");
+        assert_eq!(c.messaging(), Messaging::Off);
+        // File storage has no SQL messenger under auto.
+        let (c, _) = load("storage-method: yaml\n");
+        assert_eq!(c.messaging(), Messaging::Off);
+        let (c, _) = load("storage-method: postgresql\n");
+        assert_eq!(c.messenger_refused(), Some("postgresql"));
+        let (c, _) = load("messaging-service: pluginmsg\n");
+        assert_eq!(c.messenger_refused(), Some("pluginmsg"));
     }
 
     #[test]
-    fn split_storage_is_refused() {
-        let mut r = Reads::default();
-        let err = config_from_yaml("split-storage:\n  enabled: true\n", &mut r).unwrap_err();
-        assert!(err.contains("split-storage"), "{err}");
+    fn redis_and_nats_credentials_are_read_and_never_debug_printed() {
+        let (c, _) = load("redis:\n  enabled: true\n  address: r.example\n  username: u\n  password: hunter2-not-real\n  ssl: true\n  sentinel:\n    enabled: true\n    master: m1\n    addresses:\n      - s1.example:26380\n    password: sentinel-not-real\n");
+        assert_eq!(c.redis.username, "u");
+        assert_eq!(c.redis.password, "hunter2-not-real");
+        assert!(c.redis.ssl && c.redis.sentinel.enabled);
+        assert_eq!(c.redis.sentinel.master, "m1");
+        assert_eq!(c.redis.sentinel.addresses, vec!["s1.example:26380"]);
+        let shown = format!("{c:?}");
+        assert!(!shown.contains("hunter2") && !shown.contains("sentinel-not-real"), "a password reached Debug output");
+    }
+
+    #[test]
+    fn split_storage_methods_are_read() {
+        let (c, _) = load("split-storage:\n  enabled: true\n  methods:\n    user: mariadb\n    group: yaml\n    track: yaml\n    uuid: sqlite\n    log: json\n");
+        assert!(c.split_storage.enabled);
+        assert_eq!(c.split_storage.methods.user, "mariadb");
+        assert_eq!(c.split_storage.methods.group, "yaml");
+        assert_eq!(c.split_storage.methods.uuid, "sqlite");
+        assert_eq!(c.split_storage.methods.log, "json");
+        assert_eq!(c.storage_methods(), vec!["mariadb", "yaml", "yaml", "sqlite", "json"]);
+        // A MariaDB part makes `auto` pick the SQL messenger.
+        assert!(c.sql_messaging());
+        let (c, _) = load("split-storage:\n  enabled: true\n");
+        assert_eq!(c.split_storage.methods.user, "h2", "unset methods default to h2 as in LuckPerms");
     }
 
     #[test]

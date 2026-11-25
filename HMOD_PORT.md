@@ -1,4 +1,4 @@
-Parity: 76% now / 77% with our PRs / 77% with engine changes / 77% with new SDK (~358/~470 items; estimate from the round 3 count plus this round; items = commands and sub commands, nodes, config keys, messages, features; an item behind an off-by-default feature or a missing engine API counts as not done)
+Parity: 98% now (262/263 items of the audit list; the rest is Vault, an engine API). Older estimate: 76% now / 77% with our PRs / 77% with engine changes / 77% with new SDK (~358/~470 items; estimate from the round 3 count plus this round; items = commands and sub commands, nodes, config keys, messages, features; an item behind an off-by-default feature or a missing engine API counts as not done)
 
 ## Round 100 (blind, not compiled): checklist and closed items
 Closed this round: `/lp export` (file, `--without-users`, `--without-groups`, `--upload`), `/lp import` (file, `--replace`,
@@ -82,3 +82,15 @@ Round 2 (parity fixes)
   LuckPerms grant, because the handler cannot read the node's declared default.
 Round 3
 - granted vanilla commands: `player_commands_sent_restore` puts the hidden, granted roots back into the command tree (`glue::unhide_granted`). Item list 258/263; open: Vault provider (E), trusteditor, storage-method, split-storage, messaging-service.
+
+## Round 4 (2026-11-25, blind, not compiled)
+Closed the four items that needed library work, no engine API:
+- `/lp trusteditor` and the live editor socket: `editorsocket.rs` (protocol, ECDSA P-256 keys with ring, keystore, bytesocks over ureq + tungstenite),
+  `netio.rs` (TCP/TLS/websocket upgrade), `command/editorlive.rs` (the server side: sessions, trust, applying, follow-up session).
+- `storage-method`: `sqlite` (`storage/sqlite.rs`, rusqlite), `yaml`/`json`/`hocon`/`toml` and `-combined` (`storage/file.rs`, `storage/formats.rs`).
+  n/a with a reason: `h2` (Java database engine), `postgresql`, `mongodb` (no client crate in `horizon-mod-deps`).
+- `split-storage` (`storage/split.rs`, `storage/factory.rs`).
+- `messaging-service`: `redis` (the redis crate, as husksync) and `nats` (hand-written protocol) in `messenger.rs`; `none` now reads as `auto`
+  as in `MessagingFactory`, `notsql` turns messaging off. n/a with a reason: `rabbitmq` (no AMQP client), `postgresql`, `pluginmsg`.
+- Config keys now read: `split-storage.*`, `redis.*` (incl. `addresses`, `ssl`, `sentinel.*`), `nats.*` (incl. `ssl`), `rabbitmq.enabled`, `bytesocks-url`.
+- Needs a compile round: `cargo test -p mod-luckperms` (new features `redis`, `sqlite`, `wire`; all in the default set).

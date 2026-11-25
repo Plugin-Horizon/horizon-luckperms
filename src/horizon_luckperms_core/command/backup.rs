@@ -30,6 +30,12 @@ fn data_dir() -> PathBuf {
     DATA_DIR.get().cloned().unwrap_or_else(|| PathBuf::from("config").join("luckperms"))
 }
 
+/// A file in the data directory (the web editor's keystore lives there).
+#[cfg(feature = "wire")]
+pub(crate) fn data_file(name: &str) -> PathBuf {
+    data_dir().join(name)
+}
+
 /// `path.getParent().equals(dataDirectory)`: the file must be a direct child of the data directory.
 fn child_of_data(name: &str) -> Option<PathBuf> {
     if name.is_empty() || name == "." || name == ".." || name.contains('/') || name.contains('\\') || name.contains('\0') {

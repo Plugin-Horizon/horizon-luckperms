@@ -16,10 +16,15 @@ pub mod command;
 pub mod config;
 pub mod context;
 pub mod duration;
+#[cfg(feature = "wire")]
+pub mod editorsocket;
 pub mod glue;
 pub mod known;
 pub mod lang;
 pub mod messaging;
+pub mod messenger;
+#[cfg(feature = "wire")]
+pub mod netio;
 pub mod model;
 pub mod node;
 pub mod original;

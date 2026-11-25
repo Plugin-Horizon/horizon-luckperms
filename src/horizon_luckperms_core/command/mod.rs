@@ -6,6 +6,8 @@ mod access;
 mod args;
 pub(crate) mod backup;
 mod editor;
+#[cfg(feature = "wire")]
+mod editorlive;
 mod extra;
 mod fmt;
 mod holder;
@@ -30,6 +32,13 @@ use std::sync::Arc;
 #[allow(unused_imports)]
 pub(crate) use args::{ArgErr, Args, Check};
 pub use extra::verbose_done_lines;
+#[cfg(feature = "wire")]
+pub(crate) use editorlive::socket_frame;
+/// Without the `wire` feature there is no live editor socket and no frame to handle.
+#[cfg(not(feature = "wire"))]
+pub(crate) fn socket_frame(_rt: &Runtime, _st: &mut dyn Storage, _owner: u128, _generation: u64, _text: &str) -> Option<(CommandSender, CmdOutput)> {
+    None
+}
 pub use misc::mark_started;
 use tables::{find_main, holder_children, parent_subs, Auth, Child, MAINS};
 

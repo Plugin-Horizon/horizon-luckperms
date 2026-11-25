@@ -5,7 +5,7 @@ use crate::horizon_luckperms_core::command::ROOTS;
 use crate::horizon_luckperms_core::config::{Config, DEFAULT_TOML, FILE_NAME};
 use crate::horizon_luckperms_core::original::{self, Reads, CONFIG_YML, CONTEXTS_JSON};
 use crate::horizon_luckperms_core::runtime::{self, CommandSender, OnlinePlayer, Outgoing, Recipient};
-use crate::horizon_luckperms_core::storage::{MemoryStorage, Storage};
+use crate::horizon_luckperms_core::storage::Storage;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::SystemTime;
@@ -56,7 +56,10 @@ fn load(src: &Source) -> Result<Config, String> {
     match src {
         Source::Toml { path } => {
             let text = std::fs::read_to_string(path).unwrap_or_default();
-            Config::parse(&text)
+            let mut cfg = Config::parse(&text)?;
+            // The file storages and the SQLite file live in `<config dir>/luckperms`, with the exports.
+            cfg.data_dir = path.parent().map(|p| p.join("luckperms")).unwrap_or_default();
+            Ok(cfg)
         }
         Source::Original { dir } => {
             let text = std::fs::read_to_string(dir.join(CONFIG_YML)).map_err(|e| format!("{CONFIG_YML} cannot be read: {}", e.kind()))?;
@@ -69,6 +72,7 @@ fn load(src: &Source) -> Result<Config, String> {
                 cfg.static_contexts = statics;
                 cfg.default_contexts = defaults;
             }
+            cfg.data_dir = dir.clone();
             Ok(cfg)
         }
     }
@@ -104,7 +108,7 @@ pub fn start(config_dir: &Path, level_name: &str) {
         log(&format!("not supported, ignored: {n}"));
     }
     crate::horizon_luckperms_core::translations::load(&std::env::var("LUCKPERMS_LOCALE").unwrap_or_else(|_| cfg.horizon.locale.clone()));
-    let storage: Box<dyn Storage> = match open_storage(&cfg) {
+    let storage: Box<dyn Storage> = match crate::horizon_luckperms_core::storage::factory::open(&cfg) {
         Ok(s) => s,
         Err(e) => {
             log(&format!("storage not opened: {e}; not started"));
@@ -115,32 +119,6 @@ pub fn start(config_dir: &Path, level_name: &str) {
     if let Err(e) = runtime::start(cfg, storage, level_name) {
         log(&format!("not started: {e}"));
     }
-}
-
-fn open_storage(cfg: &Config) -> Result<Box<dyn Storage>, String> {
-    match cfg.storage.method.to_lowercase().as_str() {
-        "memory" => {
-            log("WARNING: storage method memory keeps everything in RAM; all data is lost at restart");
-            Ok(Box::new(MemoryStorage::default()))
-        }
-        "mariadb" | "mysql" => {
-            if cfg.storage.password.is_empty() {
-                return Err("storage.password is empty (fill it in, or use method = \"memory\" for a lone test server)".into());
-            }
-            sql_storage(cfg)
-        }
-        other => Err(format!("storage method {other} is not supported (mariadb, mysql, memory)")),
-    }
-}
-
-#[cfg(feature = "mysql")]
-fn sql_storage(cfg: &Config) -> Result<Box<dyn Storage>, String> {
-    Ok(Box::new(crate::horizon_luckperms_core::storage::sql::SqlStorage::new(&cfg.storage)?))
-}
-
-#[cfg(not(feature = "mysql"))]
-fn sql_storage(_cfg: &Config) -> Result<Box<dyn Storage>, String> {
-    Err("built without the mysql feature".into())
 }
 
 pub fn stop() {
