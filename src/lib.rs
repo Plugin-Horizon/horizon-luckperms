@@ -261,7 +261,6 @@ impl Hooks for Mod {
                 for p in list {
                     let want = glue::permission(p.uuid, "luckperms.autoop") == Some(true);
                     if want != (p.op_level > 0) {
-                        #[cfg(feature = "next-engine")]
                         if let Some(handle) = host.player(p.uuid) {
                             let level = if want { PermissionLevel::Owners } else { PermissionLevel::All };
                             let _ = host.player_set_op_level(handle, level);

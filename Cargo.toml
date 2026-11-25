@@ -24,5 +24,3 @@ default = ["mysql", "net"]
 mysql = ["dep:mysql"]
 # The web editor's HTTP (bytebin).
 net = ["dep:ureq", "dep:flate2"]
-# Code for engine calls the pinned SDK build lacks (auto-op needs player_set_op_level).
-next-engine = []
