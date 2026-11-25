@@ -24,5 +24,3 @@ default = ["mysql", "net"]
 mysql = ["dep:mysql"]
 # The web editor's HTTP (bytebin).
 net = ["dep:ureq", "dep:flate2"]
-# The declared default of a node is passed to a permission handler (horizon-rust/horizon #18755). Off until the SDK carries it.
-horizon_handler_default = []

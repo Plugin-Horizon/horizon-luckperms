@@ -55,6 +55,15 @@ pub(crate) fn holder_command(c: &mut Ctx<'_>, user: bool, a: Args) {
     };
     let Some(mut l) = loaded else { return };
     let rest = a.sub(2);
+    if ch.subs.is_empty() {
+        // `ArgumentPermissions`: the sub-commands without sub-commands of their own are checked here.
+        let base = format!("luckperms.{tag}.{}", ch.node);
+        let view = matches!(ch.name, "info" | "showtracks" | "listmembers" | "editor" | "clone");
+        if !access_ok(c, &l, &base, view) {
+            c.no_permission();
+            return;
+        }
+    }
     run_child(c, &mut l, ch, rest);
 }
 
@@ -94,6 +103,39 @@ fn run_child(c: &mut Ctx<'_>, l: &mut Loaded, ch: &Child, a: Args) {
     }
 }
 
+/// The `key=value` contexts typed after the other arguments of a sub-command.
+fn context_tail(a: &Args) -> ContextSet {
+    let mut set = ContextSet::new();
+    for i in 0..a.len() {
+        let entry = a.get(i);
+        if let Some(sep) = entry.find('=') {
+            let (k, v) = (&entry[..sep], &entry[sep + 1..]);
+            if !k.trim().is_empty() && !v.trim().is_empty() {
+                set.add(k, v);
+            }
+        }
+    }
+    set
+}
+
+/// `ArgumentPermissions`: whether the sender may view or modify the loaded holder (a group also needs the
+/// sender's membership with `require-sender-group-membership-to-modify`).
+fn access_ok(c: &Ctx<'_>, l: &Loaded, base: &str, view: bool) -> bool {
+    let name = l.h.name();
+    let target = match &l.h {
+        Holder::User(_) => super::access::Target::User(l.h.uuid().unwrap_or(0)),
+        Holder::Group(_) => super::access::Target::Group(&name),
+    };
+    let denied = if view { c.deny_view(base, &target) } else { c.deny_modify(base, &target) };
+    if denied {
+        return false;
+    }
+    if !view && matches!(l.h, Holder::Group(_)) && c.deny_group(&name) {
+        return false;
+    }
+    true
+}
+
 /// `GenericParentCommand.execute`: `permission`, `parent` and `meta`.
 fn generic_parent(c: &mut Ctx<'_>, l: &mut Loaded, ch: &Child, a: Args) {
     let tag = l.h.tag();
@@ -117,6 +159,27 @@ fn generic_parent(c: &mut Ctx<'_>, l: &mut Loaded, ch: &Child, a: Args) {
         return;
     }
     let rest = a.sub(1);
+    {
+        let base = format!("luckperms.{tag}.{}", sub.node);
+        let view = matches!(sub.name, "info" | "check");
+        let mut ok = access_ok(c, l, &base, view);
+        if ok && !view {
+            let first = rest.get(0);
+            let second = rest.get_or(1, "");
+            let pairs: Vec<&str> = match (ch.name, sub.name) {
+                ("permission", "set" | "unset" | "settemp" | "unsettemp") | ("meta", "set" | "unset" | "settemp" | "unsettemp") => vec![first.as_str()],
+                ("parent", "add" | "remove" | "addtemp" | "removetemp" | "switchprimarygroup") => vec![first.as_str()],
+                ("parent", "settrack") => vec![first.as_str(), second.as_str()],
+                ("parent", "cleartrack") => vec![first.as_str()],
+                _ => Vec::new(),
+            };
+            ok = !c.deny_arguments(&base, &pairs) && !c.deny_context(&base, &context_tail(&rest));
+        }
+        if !ok {
+            c.no_permission();
+            return;
+        }
+    }
     let r = match ch.name {
         "permission" => permission(c, l, sub, rest),
         "parent" => parent(c, l, sub, rest),

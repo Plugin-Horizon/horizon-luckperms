@@ -26,6 +26,7 @@ pub mod original;
 pub mod runtime;
 pub mod storage;
 pub mod text;
+pub mod translations;
 pub mod uuid;
 pub mod verbose;
 pub mod yaml;

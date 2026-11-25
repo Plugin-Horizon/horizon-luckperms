@@ -45,6 +45,22 @@ pub struct OnlinePlayer {
     pub game_mode: i32,
 }
 
+/// A vanilla or mod command a node grants (`minecraft.command.<name>` true): run as the player at `level`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GrantedJob {
+    pub player: u128,
+    pub line: String,
+    pub level: u8,
+}
+
+/// `/lp verbose command`: force `target` to run `command` while the sender's verbose listener records.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct VerboseJob {
+    pub sender: CommandSender,
+    pub target: u128,
+    pub command: String,
+}
+
 /// Who runs an `/lp` command.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CommandSender {
@@ -85,6 +101,8 @@ pub struct Runtime {
     level_name: RwLock<String>,
     outbox: Mutex<Vec<Outgoing>>,
     console_queue: Mutex<Vec<String>>,
+    verbose_jobs: Mutex<Vec<VerboseJob>>,
+    granted_jobs: Mutex<Vec<GrantedJob>>,
     cache: Mutex<HashMap<CacheKey, (u64, Arc<Resolved>)>>,
     jobs: Mutex<Option<mpsc::Sender<Job>>>,
     worker: Mutex<Option<std::thread::JoinHandle<()>>>,
@@ -139,6 +157,8 @@ pub fn start(cfg: Config, mut storage: Box<dyn Storage>, level_name: &str) -> Re
         level_name: RwLock::new(level_name.to_owned()),
         outbox: Mutex::new(Vec::new()),
         console_queue: Mutex::new(Vec::new()),
+        verbose_jobs: Mutex::new(Vec::new()),
+        granted_jobs: Mutex::new(Vec::new()),
         cache: Mutex::new(HashMap::new()),
         jobs: Mutex::new(Some(tx)),
         worker: Mutex::new(None),
@@ -169,6 +189,8 @@ pub fn detached(cfg: Config, model: Model) -> Runtime {
         level_name: RwLock::new("world".into()),
         outbox: Mutex::new(Vec::new()),
         console_queue: Mutex::new(Vec::new()),
+        verbose_jobs: Mutex::new(Vec::new()),
+        granted_jobs: Mutex::new(Vec::new()),
         cache: Mutex::new(HashMap::new()),
         jobs: Mutex::new(None),
         worker: Mutex::new(None),
@@ -377,6 +399,17 @@ impl Runtime {
         set
     }
 
+    /// Which processor decided a check for an online player (`direct`, `regex`, `wildcard`, `op` or empty).
+    pub fn check_processor(&self, uuid: u128, permission: &str) -> &'static str {
+        match self.online_player(uuid) {
+            Some(p) => {
+                let ctx = self.contexts_of(&p);
+                self.resolved(uuid, &ctx, self.is_op(p.op_level)).check(permission).processor
+            }
+            None => "",
+        }
+    }
+
     /// The model's change counter: it moves on every change of a group, user or track.
     pub fn model_version(&self) -> u64 {
         self.model.read().map(|m| m.version).unwrap_or_else(|e| e.into_inner().version)
@@ -422,6 +455,23 @@ impl Runtime {
         // Not "op" here: an op keeps the game's own rights unless a node says false.
         let node = cfg.command_node(&root);
         self.resolved(uuid, &ctx, false).check(&node).result.as_bool()
+    }
+
+    pub fn queue_granted_job(&self, job: GrantedJob) {
+        self.granted_jobs.lock().unwrap_or_else(|e| e.into_inner()).push(job);
+    }
+
+    pub fn drain_granted_jobs(&self) -> Vec<GrantedJob> {
+        std::mem::take(&mut *self.granted_jobs.lock().unwrap_or_else(|e| e.into_inner()))
+    }
+
+    /// Queues a forced command of `/lp verbose command` for the next tick.
+    pub fn queue_verbose_job(&self, job: VerboseJob) {
+        self.verbose_jobs.lock().unwrap_or_else(|e| e.into_inner()).push(job);
+    }
+
+    pub fn drain_verbose_jobs(&self) -> Vec<VerboseJob> {
+        std::mem::take(&mut *self.verbose_jobs.lock().unwrap_or_else(|e| e.into_inner()))
     }
 
     /// Queues `execute as <name> at <name> run <command>` for the next tick.

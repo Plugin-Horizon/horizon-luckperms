@@ -2,6 +2,7 @@
 //! the same sub commands, argument checks, permission nodes, usage texts and messages (colours included).
 //! Runs on the worker thread (it may load offline users and always saves).
 
+mod access;
 mod args;
 pub(crate) mod backup;
 mod editor;
@@ -28,6 +29,7 @@ use std::sync::Arc;
 
 #[allow(unused_imports)]
 pub(crate) use args::{ArgErr, Args, Check};
+pub use extra::verbose_done_lines;
 pub use misc::mark_started;
 use tables::{find_main, holder_children, parent_subs, Auth, Child, MAINS};
 
@@ -500,6 +502,7 @@ fn run(c: &mut Ctx<'_>, mut a: Vec<String>) {
         "deletetrack" => track::delete_track(c, args),
         "listtracks" => track::list_tracks(c),
         "verbose" => extra::verbose(c, args),
+        "translations" => extra::translations(c, args),
         "tree" => extra::tree(c, args),
         "bulkupdate" => extra::bulkupdate(c, args),
         "import" => backup::import(c, args),

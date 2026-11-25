@@ -311,19 +311,20 @@ pub fn config_from_yaml(text: &str, reads: &mut Reads) -> Result<Config, String>
         players_console(&mut k, "disable-luckperms-commands", &mut c.disable_luckperms_commands);
         players_console(&mut k, "commands-read-only-mode", &mut c.commands_read_only_mode);
 
+        set!(k, "auto-op", c.auto_op);
+        set!(k, "require-sender-group-membership-to-modify", c.require_sender_group_membership);
+        set!(k, "argument-based-command-permissions", c.argument_based_command_permissions);
+        set!(k, "apply-default-negated-permissions-before-wildcards", c.apply_default_negated_before_wildcards);
+        if let Some(v) = k.text("meta-value-selection-default") {
+            c.meta_value_selection_default = v.to_lowercase();
+        }
+        c.meta_value_selection = k.texts("meta-value-selection").into_iter().map(|(k, v)| (k.to_lowercase(), v.to_lowercase())).collect();
+        if c.auto_op {
+            // `OPS_ENABLED`: `!auto-op && enable-ops`.
+            c.horizon.enable_ops = false;
+        }
+
         // Read and not supported: a non-default value is noted (a key name only, never its value).
-        if k.flag("auto-op") == Some(true) {
-            notes.push("auto-op (not supported)".into());
-        }
-        if k.flag("argument-based-command-permissions") == Some(true) {
-            notes.push("argument-based-command-permissions (not supported)".into());
-        }
-        if k.flag("require-sender-group-membership-to-modify") == Some(true) {
-            notes.push("require-sender-group-membership-to-modify (not supported)".into());
-        }
-        if k.flag("apply-default-negated-permissions-before-wildcards") == Some(true) {
-            notes.push("apply-default-negated-permissions-before-wildcards (not supported)".into());
-        }
         if k.flag("resolve-command-selectors") == Some(true) {
             notes.push("resolve-command-selectors (not supported)".into());
         }
@@ -332,12 +333,6 @@ pub fn config_from_yaml(text: &str, reads: &mut Reads) -> Result<Config, String>
         }
         if k.flag("use-vault-server") == Some(true) {
             notes.push("use-vault-server (not supported)".into());
-        }
-        if k.text("meta-value-selection-default").is_some_and(|v| v != "inheritance") {
-            notes.push("meta-value-selection-default (only inheritance is supported)".into());
-        }
-        if k.node("meta-value-selection").is_some_and(|n| !n.entries().is_empty()) {
-            notes.push("meta-value-selection (not supported)".into());
         }
     }
     for (path, _) in IGNORED {
@@ -599,9 +594,12 @@ auto-op: false
         assert!(!c.unsupported.iter().any(|n| n.contains("not-a-real-password")));
         assert!(!c.unsupported.iter().any(|n| n.starts_with("auto-op")), "auto-op false is default");
         let (c, _) = load("auto-op: true\nuse-vault-server: true\nmeta-value-selection-default: weight\n");
-        assert!(c.unsupported.iter().any(|n| n.starts_with("auto-op")));
+        assert!(c.auto_op && !c.horizon.enable_ops, "auto-op turns enable-ops off");
         assert!(c.unsupported.iter().any(|n| n.starts_with("use-vault-server")));
-        assert!(c.unsupported.iter().any(|n| n.starts_with("meta-value-selection-default")));
+        assert_eq!(c.meta_value_selection_default, "weight");
+        let (c, _) = load("meta-value-selection:\n  Level: Highest-Number\nrequire-sender-group-membership-to-modify: true\n");
+        assert_eq!(c.meta_value_selection.get("level").map(String::as_str), Some("highest-number"));
+        assert!(c.require_sender_group_membership);
     }
 
     #[test]

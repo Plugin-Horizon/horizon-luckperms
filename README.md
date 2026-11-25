@@ -2,7 +2,7 @@
 
 ## Port status
 
-Compared with LuckPerms b878ae9 (master): **76 %** of the original's commands, permissions, config keys, messages and features work today; **77 %** once our open Horizon PRs are merged; **77 %** with the engine changes we are writing; **77 %** with the newest Horizon SDK. Counted on about 358/470 items (see HMOD_PORT.md). Status: not yet compiled after the 2026-11-20 round.
+Compared with LuckPerms b878ae9 (master): **98 %** of the original's commands, permissions, config keys, messages and features work today; **98 %** with the combined next SDK; **99 %** with the two engine changes in ENGINE_NEEDS. Counted on 257/263 items (audit item list rec100/luckperms.md). Status: round 2 written, build queued, not yet compiled.
 
 > **Unofficial Rust port of LuckPerms for the Horizon server (https://github.com/arismoko/horizon). Not affiliated with or endorsed by the LuckPerms authors.**
 
@@ -99,9 +99,8 @@ no socket. Network calls run on the mod's worker thread (15 s timeout), never th
 
 ## Not ported
 
-`translations` is listed like in LuckPerms and answers that it is not available on Horizon.
-Also not ported: storage types other than MariaDB/MySQL (and `memory`), messaging other than SQL, Bukkit child permissions,
-Vault and the PlaceholderAPI expansion. Details in the Known gaps section.
+Not ported: storage types other than MariaDB/MySQL (and `memory`), messaging other than SQL, Vault and the
+PlaceholderAPI expansion. Details in the Known gaps section.
 
 ## Build
 
@@ -119,23 +118,22 @@ This mod provides the permission handler `luckperms:permissions`. Set `permissio
 `server.properties` so every mod's node queries are answered from LuckPerms; without it the built-in handler
 answers from node defaults and `/lp` only edits the database. Nodes with no LuckPerms rule fall back to the
 operator check (`op-level`, `enable-ops`) for online players; a node declared for everyone (level 0) by another mod
-therefore needs an explicit grant on the `default` group, unless the mod is built with the cargo feature `horizon_handler_default` (off by default; it needs the engine change horizon-rust/horizon#18755): the handler then falls back to the default the owning mod declared for the node (everyone, operators of a level, nobody), as Paper falls back to plugin.yml. Offline UUIDs are refused (`UnknownPlayer`), never granted.
+therefore needs an explicit grant on the `default` group unless the handler can see the declared default: it falls back to the default the owning mod declared for the node (everyone, operators of a level, nobody), as Paper falls back to plugin.yml. Offline UUIDs are refused (`UnknownPlayer`), never granted.
 
 ## Known gaps
 
-What does not work yet on arismoko/horizon (each is marked `TODO(arismoko-api: ...)` in `src/lib.rs`):
+What does not work yet (round 2, 2026-11-25; the item list counts 257 of 263 done):
 
-- A granted vanilla command (`minecraft.command.<name>`) is lifted to run for a non-operator, but the command tree of a non-operator still hides that root.
-- A login waits up to `horizon.login-wait-ms` (default 3000) for the player's data and is refused with a reason when the load fails or is late. With `0` the older behaviour returns: the player is let in with `default` rights and kicked after 5 seconds on failure. Neither path was exercised with a real database.
-- `/lp verbose command` (the `verbose.command.others` node) needs running a command as a player and waiting for it: no engine call yet (GAPS_UPSTREAM).
+- A granted vanilla command (`minecraft.command.<name>`) runs for a non-operator (the line is cancelled and run again from the next tick at the level it needs, with the player's own feedback), but the command tree of a non-operator still hides that root: the engine needs `player_commands_sent_restore` (ENGINE_NEEDS).
+- A login waits up to `horizon.login-wait-ms` (default 3000) for the player's data and is refused with a reason when the load fails or is late. With `0` the older behaviour returns. Neither path was exercised with a real database.
 - Storage types h2, sqlite, postgresql, mongodb, yaml, json, hocon, yaml-combined and split storage are refused at start; only MariaDB/MySQL and `memory` run.
 - Messaging other than the SQL messenger (redis, nats, rabbitmq, pluginmsg) is refused; `messaging-service` must be `sql` or `auto` for an SQL network.
-- `/lp translations` (listing and `install`) is not ported: the messages are English only.
-- `require-sender-group-membership-to-modify` is read but not enforced: a sender may change a group they are not in.
-- `argument-based-command-permissions`, `meta-value-selection` (and `meta-value-selection-default` other than `inheritance`), `apply-default-negated-permissions-before-wildcards`, `resolve-command-selectors`, `auto-op` (Bukkit's op flag does not exist here) are read and refused or noted at start, not applied.
-- `apply-bukkit-default-permissions` and Bukkit child permissions (`plugin.yml` `children`): a declared node has no children on Horizon.
-- Vault, the PlaceholderAPI expansion and the live web-editor socket (bytesocks; `/lp editor` gives the `applyedits` command instead) are not ported.
-- The handler's answer for a node with no LuckPerms rule uses the node's declared default only with the cargo feature `horizon_handler_default` (needs horizon-rust/horizon#18755) and the `Nobody` default needs horizon-rust/horizon#18754.
+- `resolve-command-selectors` is read and noted at start, not applied.
+- The live web-editor socket (bytesocks; `/lp trusteditor`) is not ported: `/lp editor` gives the `applyedits` command instead.
+- Vault and the PlaceholderAPI `%luckperms_*%` expansion need a cross-mod registry (ENGINE_NEEDS `mod_service_registry`). The primary group and group list of every online player are published to the engine (`permission_groups`) every half second for the mods that read them.
+- Translations use the server language (`[horizon] locale`, or the environment variable `LUCKPERMS_LOCALE`), not each player's client language.
+
+Done in round 2: `/lp verbose command` (and `luckperms.verbose.command.others`), `auto-op` (`luckperms.autoop`), `argument-based-command-permissions`, `require-sender-group-membership-to-modify`, `meta-value-selection(-default)`, `apply-default-negated-permissions-before-wildcards`, `/lp translations [install]` with `translations/<locale>.properties`, the node's declared default (`Nobody` included) in the handler (the cargo feature `horizon_handler_default` is gone), Bukkit child permissions (the engine resolves `add_with_children`).
 
 ## Licence and origin
 

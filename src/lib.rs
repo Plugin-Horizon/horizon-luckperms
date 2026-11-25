@@ -13,7 +13,7 @@ use crate::horizon_luckperms_core::text as lp_text;
 use crate::horizon_luckperms_core::Recipient;
 use mod_api::{
     Command, CommandArgumentValue, CommandSource, Flow, Hooks, PermissionError,
-    PermissionGatherHandlerEvent, PermissionHandlerQueryEvent, PermissionValue, PermissionValueType,
+    PermissionGatherHandlerEvent, PermissionHandlerQueryEvent, PermissionLevel, PermissionValue, PermissionValueType,
     PlayerCommandEvent, PlayerCommandsSentEvent, PlayerLoggedInEvent, PlayerLoggedOutEvent, PlayerLoginEvent,
     RegisterCommandsEvent, RunModCommandEvent, ServerAboutToStartEvent,
     ServerHost, ServerStoppingEvent, ServerTickEvent, ServerTickPhase, Suggestion, TabCompleteEvent,
@@ -38,6 +38,9 @@ struct Pending {
     since: Instant,
     answer: Option<Result<(), String>>,
 }
+
+/// Set while a granted command runs, so its own `player_command` is not granted again.
+static GRANTED_RUNNING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 static PENDING: Mutex<Option<HashMap<u128, Pending>>> = Mutex::new(None);
 
@@ -214,6 +217,30 @@ impl Hooks for Mod {
         let n = CALLS.fetch_add(1, Ordering::Relaxed);
         // Every 10th tick the players go to the cache; every 40th the config files are looked at.
         let players = (n % 10 == 0).then(|| online(&*host));
+        // The groups go to the engine for the mods that read them (TAB, Vault-style callers): `permission_groups`.
+        if let Some(list) = &players {
+            for p in list {
+                let groups = mod_api::PermissionGroups {
+                    primary: glue::primary_group(p.uuid),
+                    groups: glue::groups(p.uuid),
+                };
+                let _ = host.permission_set_groups(p.uuid, &groups);
+            }
+        }
+        // `auto-op`: operator status follows the node `luckperms.autoop` (Bukkit's `setOp`).
+        if let Some(list) = &players {
+            if glue::auto_op() {
+                for p in list {
+                    let want = glue::permission(p.uuid, "luckperms.autoop") == Some(true);
+                    if want != (p.op_level > 0) {
+                        if let Some(handle) = host.player(p.uuid) {
+                            let level = if want { PermissionLevel::Owners } else { PermissionLevel::All };
+                            let _ = handle.set_op_level(host, level);
+                        }
+                    }
+                }
+            }
+        }
         if n % 40 == 0 {
             glue::check_config();
         }
@@ -237,6 +264,23 @@ impl Hooks for Mod {
         // again (arismoko's refresh is server-wide, not per player as native_resend_commands was).
         if out.resend_trees {
             host.commands().refresh_commands();
+        }
+        // `/lp verbose command`: each target runs its command as itself while the sender's listener records.
+        for job in out.verbose_jobs {
+            glue::verbose_job_start(&job);
+            if let Some(p) = host.player(job.target) {
+                let level = p.permission_level(&*host).unwrap_or(0);
+                let _ = p.entity().run_command_with_output(host, &job.command, PermissionLevel::from_level(i32::from(level)));
+            }
+            glue::verbose_job_done(&job);
+        }
+        // Granted commands: run as the player at the level the command needs.
+        for job in out.granted {
+            if let Some(p) = host.player(job.player) {
+                GRANTED_RUNNING.store(true, Ordering::Relaxed);
+                let _ = p.entity().run_command(host, &job.line, PermissionLevel::from_level(i32::from(job.level)));
+                GRANTED_RUNNING.store(false, Ordering::Relaxed);
+            }
         }
         // Queued console commands (not used by the core today, kept as in the port).
         for line in out.console_commands {
@@ -307,9 +351,8 @@ impl Hooks for Mod {
         // Only one usage per root, with a free text argument: a console line then reaches run_mod_command
         // whole. The port's per-word usages (for the client's completion) are not registered: arismoko would
         // parse them into typed literals and arguments that cannot be turned back into the typed line.
-        // TODO(arismoko-api: command_raw_line): the typed line of a command, as the console or a player
-        // sent it, so per-word usages could be parsed without losing it. The console_line hook does not
-        // give it: it hears what the server logs, not the commands typed.
+        // The typed line of a player's /lp is taken whole in `player_command` and its completion is answered by
+        // `tab_complete`; the console reaches `run_mod_command` through the free text argument.
         for root in ROOTS {
             event.commands.push(Command::new(&format!("{root} [args:text]")));
         }
@@ -352,9 +395,12 @@ impl Hooks for Mod {
             event.replies.push(line_text(&line));
             return Flow::Cancel;
         }
-        // TODO(arismoko-api: player_command_level): a granted vanilla command (minecraft.command.<name> true) does not
-        // run at the level it needs for a non-operator; the port lifted the level here. Refusals still work.
-        // (`Command::with_node` covers only commands a mod registers, not vanilla roots.)
+        // A command a node grants above the player's level (`minecraft.command.<name>` true) is cancelled here and
+        // run again from the next tick at the level it needs, as the player (their own feedback).
+        let level = players.iter().find(|p| p.uuid == event.player).map_or(0, |p| p.op_level);
+        if !GRANTED_RUNNING.load(Ordering::Relaxed) && glue::queue_granted(event.player, event.command, level) {
+            return Flow::Cancel;
+        }
         // /lp: the core answers later, through the tick.
         if glue::lp_command(Some((event.player, event.name)), event.command) {
             return Flow::Cancel;
@@ -363,10 +409,9 @@ impl Hooks for Mod {
     }
 
     fn player_commands_sent(&self, _: &mut dyn ServerHost, event: &mut PlayerCommandsSentEvent<'_>) {
-        // Refused roots leave the player's tree. TODO(arismoko-api: command_node): the roots the
-        // level hides cannot be put back for a granted node (the port's names_hidden), so a granted
-        // vanilla command of a non-operator stays out of the tree. `Command::with_node` is real now,
-        // but only for roots a mod registers.
+        // Refused roots leave the player's tree. Roots the level hides cannot be put back for a granted node:
+        // the hook only collects names to remove (ENGINE_NEEDS `player_commands_sent_restore`), so a granted
+        // vanilla command of a non-operator still runs but is not completed.
         glue::filter_tree(event.player, event.names);
     }
 
@@ -391,20 +436,15 @@ impl Hooks for Mod {
             .and_then(|u| host.player(u))
             .and_then(|p| p.permission_level(&*host))
             .unwrap_or(0);
-        // With the engine's declared default (feature `horizon_handler_default`), a node nobody set falls back to
-        // what the mod that owns it declared, as Paper falls back to plugin.yml.
-        #[cfg(feature = "horizon_handler_default")]
-        let answer = {
-            let declared = match event.default {
-                mod_api::NodeDefault::Level(l) => glue::DeclaredDefault::Level(l.level()),
-                mod_api::NodeDefault::Value(mod_api::PermissionValue::Boolean(true)) => glue::DeclaredDefault::Everyone,
-                mod_api::NodeDefault::Value(_) => glue::DeclaredDefault::Nobody,
-                _ => glue::DeclaredDefault::Level(1),
-            };
-            glue::handler_answer_declared(event.uuid, &event.node.name, event.online.is_some(), level, declared)
+        // A node nobody set falls back to what the mod that owns it declared, as Paper falls back to plugin.yml.
+        let declared = match event.default {
+            mod_api::NodeDefault::Level(l) => glue::DeclaredDefault::Level(l.level()),
+            mod_api::NodeDefault::Value(mod_api::PermissionValue::Boolean(true)) => glue::DeclaredDefault::Everyone,
+            mod_api::NodeDefault::Nobody | mod_api::NodeDefault::Value(_) => glue::DeclaredDefault::Nobody,
+            _ => glue::DeclaredDefault::Level(1),
         };
-        #[cfg(not(feature = "horizon_handler_default"))]
-        let answer = glue::handler_answer(event.uuid, &event.node.name, event.online.is_some(), level);
+        let answer =
+            glue::handler_answer_declared(event.uuid, &event.node.name, event.online.is_some(), level, declared);
         Some(match answer {
             Some(b) => Ok(PermissionValue::Boolean(b)),
             None if event.online.is_some() => Err(PermissionError::NotInitialized),

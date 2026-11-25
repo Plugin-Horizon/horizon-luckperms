@@ -59,6 +59,18 @@ pub struct Config {
     /// `apply-bukkit-default-permissions`: nodes registered as Bukkit default-true (`api::register_default_true`)
     /// are true for everyone their permissions leave undefined.
     pub apply_bukkit_default_permissions: bool,
+    /// `auto-op`: operator status follows the node `luckperms.autoop`; `enable-ops` is then off.
+    pub auto_op: bool,
+    /// `require-sender-group-membership-to-modify`: a sender may only change groups they are a member of.
+    pub require_sender_group_membership: bool,
+    /// `argument-based-command-permissions`: `/lp` sub-commands also check the node of the argument.
+    pub argument_based_command_permissions: bool,
+    /// `apply-default-negated-permissions-before-wildcards`: a negated default node beats a wildcard.
+    pub apply_default_negated_before_wildcards: bool,
+    /// `meta-value-selection-default`: `inheritance`, `highest-number` or `lowest-number`.
+    pub meta_value_selection_default: String,
+    /// `meta-value-selection`: the strategy per meta key.
+    pub meta_value_selection: BTreeMap<String, String>,
     /// `watch-files`: a saved config is reloaded within a second (on by default).
     pub watch_files: bool,
     /// The non-SQL messenger the original file would use (`redis`, `nats`, `rabbitmq`): the port does not
@@ -182,6 +194,8 @@ pub struct Horizon {
     /// A failed or late load refuses the login with a reason. 0: the player is let in at once with `default`
     /// rights and kicked after five seconds when the load fails (the older behaviour).
     pub login_wait_ms: u64,
+    /// The language of the messages (`translations/<locale>.properties`); `en` is the shipped English.
+    pub locale: String,
 }
 
 impl Default for Horizon {
@@ -197,6 +211,7 @@ impl Default for Horizon {
             world_names: BTreeMap::new(),
             unload_delay_seconds: 60,
             login_wait_ms: 3000,
+            locale: "en".into(),
         }
     }
 }
@@ -255,6 +270,12 @@ impl Default for Config {
             log_notify_filtered_descriptions: Vec::new(),
             default_contexts: BTreeMap::new(),
             apply_bukkit_default_permissions: true,
+            auto_op: false,
+            require_sender_group_membership: false,
+            argument_based_command_permissions: false,
+            apply_default_negated_before_wildcards: false,
+            meta_value_selection_default: "inheritance".into(),
+            meta_value_selection: BTreeMap::new(),
             watch_files: true,
             messenger_refused: None,
             unsupported: Vec::new(),

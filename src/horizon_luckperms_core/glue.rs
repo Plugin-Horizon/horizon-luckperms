@@ -4,7 +4,7 @@
 use crate::horizon_luckperms_core::command::ROOTS;
 use crate::horizon_luckperms_core::config::{Config, DEFAULT_TOML, FILE_NAME};
 use crate::horizon_luckperms_core::original::{self, Reads, CONFIG_YML, CONTEXTS_JSON};
-use crate::horizon_luckperms_core::runtime::{self, CommandSender, OnlinePlayer, Outgoing};
+use crate::horizon_luckperms_core::runtime::{self, CommandSender, OnlinePlayer, Outgoing, Recipient};
 use crate::horizon_luckperms_core::storage::{MemoryStorage, Storage};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -79,6 +79,7 @@ fn load(src: &Source) -> Result<Config, String> {
 /// empty password when missing; the service then starts only once the password is filled in.
 pub fn start(config_dir: &Path, level_name: &str) {
     crate::horizon_luckperms_core::command::backup::set_data_dir(config_dir);
+    crate::horizon_luckperms_core::translations::set_dir(config_dir);
     let src = if Path::new(ORIGINAL_DIR).join(CONFIG_YML).exists() {
         Source::Original { dir: PathBuf::from(ORIGINAL_DIR) }
     } else {
@@ -102,6 +103,7 @@ pub fn start(config_dir: &Path, level_name: &str) {
     for n in &cfg.unsupported {
         log(&format!("not supported, ignored: {n}"));
     }
+    crate::horizon_luckperms_core::translations::load(&std::env::var("LUCKPERMS_LOCALE").unwrap_or_else(|_| cfg.horizon.locale.clone()));
     let storage: Box<dyn Storage> = match open_storage(&cfg) {
         Ok(s) => s,
         Err(e) => {
@@ -176,6 +178,10 @@ pub fn check_config() {
 pub struct TickOut {
     pub lines: Vec<Outgoing>,
     pub console_commands: Vec<String>,
+    /// `/lp verbose command` jobs: the host runs each command as its target.
+    pub verbose_jobs: Vec<runtime::VerboseJob>,
+    /// Commands a node grants above the player's operator level: the host runs each at the level it needs.
+    pub granted: Vec<runtime::GrantedJob>,
     /// Groups, users or tracks changed since the last tick: the players' command trees are
     /// sent again (`native_resend_commands`), so granted or revoked commands show at once.
     pub resend_trees: bool,
@@ -194,7 +200,12 @@ pub fn tick(players: Option<Vec<OnlinePlayer>>) -> TickOut {
     }
     static SEEN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let resend_trees = changed_since(&SEEN, rt.model_version());
-    TickOut { lines: rt.drain_outbox(), console_commands: rt.drain_console_commands(), resend_trees }
+    TickOut { lines: rt.drain_outbox(), console_commands: rt.drain_console_commands(), verbose_jobs: rt.drain_verbose_jobs(), granted: rt.drain_granted_jobs(), resend_trees }
+}
+
+/// `auto-op` is on: operator status follows `luckperms.autoop`.
+pub fn auto_op() -> bool {
+    runtime::get().is_some_and(|rt| rt.config().auto_op)
 }
 
 /// `native_permission_check`: LuckPerms' answer for a node, None when it has no opinion
@@ -244,8 +255,22 @@ pub enum DeclaredDefault {
 pub fn handler_answer_declared(player: u128, node: &str, online: bool, level: u8, declared: DeclaredDefault) -> Option<bool> {
     let rt = runtime::get()?;
     crate::horizon_luckperms_core::known::record(node);
-    let decision = rt.check(player, node).as_bool();
-    let answer = declared_answer(decision, online, rt.is_op(level), level, declared, rt.config().apply_bukkit_default_permissions);
+    let mut decision = rt.check(player, node).as_bool();
+    let is_op = rt.is_op(level);
+    // `apply-default-negated-permissions-before-wildcards`: a node whose declared default is false for this player
+    // is not lifted by a wildcard or regex.
+    if rt.config().apply_default_negated_before_wildcards
+        && decision == Some(true)
+        && matches!(rt.check_processor(player, node), "wildcard" | "regex")
+        && match declared {
+            DeclaredDefault::Nobody => true,
+            DeclaredDefault::Level(l) => l > 0 && !(is_op && level >= l),
+            DeclaredDefault::Everyone => false,
+        }
+    {
+        decision = Some(false);
+    }
+    let answer = declared_answer(decision, online, is_op, level, declared, rt.config().apply_bukkit_default_permissions);
     crate::horizon_luckperms_core::verbose::record(&rt, player, rt.online_player(player).map(|p| p.name), node, decision);
     answer
 }
@@ -542,4 +567,51 @@ mod declared_default_tests {
         assert_eq!(declared_answer(None, true, false, 0, DeclaredDefault::Everyone, false), Some(false));
         assert_eq!(declared_answer(None, true, true, 4, DeclaredDefault::Nobody, false), Some(true));
     }
+}
+
+/// Called by the host after it ran a `/lp verbose command` job: stops the sender's listener and says how it went
+/// (`VerboseCommand`: complete, or no checks made).
+pub fn verbose_job_done(job: &runtime::VerboseJob) {
+    let Some(rt) = runtime::get() else { return };
+    let matched = crate::horizon_luckperms_core::verbose::unregister(job.sender.uuid).map_or(0, |f| f.matched);
+    let to = if job.sender.console { Recipient::Console } else { Recipient::Player(job.sender.uuid) };
+    let lines = crate::horizon_luckperms_core::command::verbose_done_lines(matched);
+    for l in lines {
+        rt.push_out(to.clone(), l);
+    }
+}
+
+/// Registers the accept-all listener for a job, before its command runs.
+pub fn verbose_job_start(job: &runtime::VerboseJob) {
+    if let Ok(ast) = crate::horizon_luckperms_core::verbose::compile("") {
+        let to = if job.sender.console { Recipient::Console } else { Recipient::Player(job.sender.uuid) };
+        crate::horizon_luckperms_core::verbose::register(to, job.sender.uuid, &job.sender.name, job.sender.console, ast, "", true);
+    }
+}
+
+/// A typed command whose node is true but whose vanilla level the player lacks: queued to run at the level it needs
+/// (the player's own feedback, no operator status). True when queued (the original line must then be cancelled).
+pub fn queue_granted(player: u128, command: &str, level: u8) -> bool {
+    let Some(rt) = runtime::get() else { return false };
+    let needed = command_level(player, command, level);
+    if needed <= level {
+        return false;
+    }
+    rt.queue_granted_job(runtime::GrantedJob { player, line: command.trim_start_matches('/').to_owned(), level: needed });
+    true
+}
+
+/// The player's primary group, for the engine's `permission_groups`.
+pub fn primary_group(player: u128) -> Option<String> {
+    crate::horizon_luckperms_core::api::primary_group(player)
+}
+
+/// Every group the player inherits here, primary first when known.
+pub fn groups(player: u128) -> Vec<String> {
+    let mut all = crate::horizon_luckperms_core::api::groups(player);
+    if let Some(p) = primary_group(player) {
+        all.retain(|g| *g != p);
+        all.insert(0, p);
+    }
+    all
 }

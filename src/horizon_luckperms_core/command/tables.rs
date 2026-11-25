@@ -199,7 +199,7 @@ pub const MAINS: &[Main] = &[
     main("export", "export", Check::AlwaysFalse, Auth::Node("export")),
     main("reloadconfig", "reload-config", Check::AlwaysFalse, Auth::Node("reloadconfig")),
     main("bulkupdate", "bulk-update", Check::AlwaysFalse, Auth::Node("bulkupdate")),
-    unsupported("translations", "translations", "translations", true),
+    main("translations", "translations", Check::NotInRange(0, 1), Auth::Node("translations")),
     hidden("applyedits", "apply-edits", Check::NotInRange(1, 2), "applyedits"),
     hidden("trusteditor", "trust-editor", Check::Not(1), "trusteditor"),
     main("creategroup", "create-group", Check::NotInRange(1, 3), Auth::Node("creategroup")),
