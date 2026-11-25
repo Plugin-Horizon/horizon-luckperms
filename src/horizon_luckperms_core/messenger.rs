@@ -47,7 +47,7 @@ pub fn refusal(what: &str) -> String {
     match what {
         "rabbitmq" => "messaging service rabbitmq needs the wave2 build (the AMQP client of fam-mod-deps-db-clients)".into(),
         "postgresql" => "messaging service postgresql needs the wave2 build (the PostgreSQL client of fam-mod-deps-db-clients)".into(),
-        "pluginmsg" => "messaging service pluginmsg needs the wave2 build (the plugin channels of fam-provider-bridges)".into(),
+        "pluginmsg" => "messaging service pluginmsg needs the wave2 build: it sends plugin messages over a player's connection to a relay on the proxy, which needs the plugin channels of fam-provider-bridges".into(),
         other => format!("messaging service {other} is not available"),
     }
 }

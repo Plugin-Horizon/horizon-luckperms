@@ -1139,7 +1139,8 @@ mod tests {
         for owner in [stays, leaves] {
             open(Who { uuid: owner, name: "x".into(), console: false }, vec![], vec![], "u", sink()).unwrap();
         }
-        tick(&|o| o == stays);
+        // Only `leaves` has left: the registry is shared with the tests that run in parallel.
+        tick(&|o| o != leaves);
         assert!(take(leaves, None).is_none(), "the player who left lost the socket");
         let kept = take(stays, None).expect("the other one stays");
         let generation = kept.state.generation;
