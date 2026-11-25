@@ -101,6 +101,8 @@ pub struct Runtime {
     pub model: RwLock<Model>,
     online: RwLock<HashMap<u128, OnlinePlayer>>,
     left: Mutex<HashMap<u128, Instant>>,
+    /// Contexts other mods publish per player (`discordsrv:contexts`), added by [`Runtime::contexts_of`].
+    external: RwLock<HashMap<u128, Vec<(String, String)>>>,
     level_name: RwLock<String>,
     outbox: Mutex<Vec<Outgoing>>,
     console_queue: Mutex<Vec<String>>,
@@ -172,6 +174,7 @@ pub fn start(cfg: Config, mut storage: Box<dyn Storage>, level_name: &str) -> Re
         model: RwLock::new(model),
         online: RwLock::new(HashMap::new()),
         left: Mutex::new(HashMap::new()),
+        external: RwLock::new(HashMap::new()),
         level_name: RwLock::new(level_name.to_owned()),
         outbox: Mutex::new(Vec::new()),
         console_queue: Mutex::new(Vec::new()),
@@ -208,6 +211,7 @@ pub fn detached(cfg: Config, model: Model) -> Runtime {
         model: RwLock::new(model),
         online: RwLock::new(HashMap::new()),
         left: Mutex::new(HashMap::new()),
+        external: RwLock::new(HashMap::new()),
         level_name: RwLock::new("world".into()),
         outbox: Mutex::new(Vec::new()),
         console_queue: Mutex::new(Vec::new()),
@@ -293,6 +297,9 @@ impl Runtime {
         if let Ok(mut o) = self.online.write() {
             o.remove(&uuid);
         }
+        if let Ok(mut e) = self.external.write() {
+            e.remove(&uuid);
+        }
         self.left.lock().unwrap_or_else(|e| e.into_inner()).insert(uuid, Instant::now());
     }
 
@@ -312,6 +319,18 @@ impl Runtime {
 
     pub fn online_players(&self) -> Vec<OnlinePlayer> {
         self.online.read().map(|o| o.values().cloned().collect()).unwrap_or_default()
+    }
+
+    /// The contexts another mod calculates for a player (the original's DiscordSRV context calculator); an empty
+    /// list forgets them.
+    pub fn set_external_contexts(&self, uuid: u128, pairs: Vec<(String, String)>) {
+        if let Ok(mut e) = self.external.write() {
+            if pairs.is_empty() {
+                e.remove(&uuid);
+            } else {
+                e.insert(uuid, pairs);
+            }
+        }
     }
 
     pub fn set_level_name(&self, name: &str) {
@@ -345,6 +364,11 @@ impl Runtime {
         }
         if !cfg.calculator_disabled(CONFIGURATION_CALCULATOR) {
             for (k, v) in &cfg.static_contexts {
+                set.add(k, v);
+            }
+        }
+        if let Ok(e) = self.external.read() {
+            for (k, v) in e.get(&p.uuid).into_iter().flatten() {
                 set.add(k, v);
             }
         }
@@ -917,6 +941,21 @@ mod tests {
             std::thread::sleep(Duration::from_millis(30));
         }
         panic!("timed out");
+    }
+
+    #[test]
+    fn external_contexts_join_the_players_set() {
+        let mut cfg = Config::default();
+        cfg.storage.method = "memory".into();
+        cfg.messaging_service = "none".into();
+        let rt = start(cfg, Box::new(MemoryStorage::default()), "world").unwrap();
+        let p = OnlinePlayer { uuid: 7, name: "Eve".into(), op_level: 0, dimension: "minecraft:overworld".into(), game_mode: 0 };
+        rt.set_external_contexts(7, vec![("discordsrv:linked".into(), "true".into()), ("discordsrv:role".into(), "Admin".into())]);
+        let ctx = rt.contexts_of(&p);
+        assert!(ctx.contains("discordsrv:linked", "true"));
+        assert!(ctx.contains("discordsrv:role", "admin"));
+        rt.set_external_contexts(7, Vec::new());
+        assert!(!rt.contexts_of(&p).contains_key("discordsrv:linked"));
     }
 
     #[test]

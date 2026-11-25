@@ -324,6 +324,23 @@ pub fn login_wait_ms() -> u64 {
     runtime::get().map_or(0, |rt| rt.config().horizon.login_wait_ms)
 }
 
+/// A `discordsrv:contexts` reply: one `key=value` per line; lines without both parts are skipped.
+pub fn parse_contexts(reply: &str) -> Vec<(String, String)> {
+    reply
+        .lines()
+        .filter_map(|l| l.split_once('='))
+        .filter(|(k, v)| !k.trim().is_empty() && !v.trim().is_empty())
+        .map(|(k, v)| (k.trim().to_owned(), v.trim().to_owned()))
+        .collect()
+}
+
+/// The contexts another mod gave for a player.
+pub fn external_contexts(uuid: u128, pairs: Vec<(String, String)>) {
+    if let Some(rt) = runtime::get() {
+        rt.set_external_contexts(uuid, pairs);
+    }
+}
+
 pub fn players(players: Vec<OnlinePlayer>) {
     if let Some(rt) = runtime::get() {
         rt.update_players(players);
@@ -523,6 +540,13 @@ mod declared_default_tests {
     fn a_decision_wins_over_the_declared_default() {
         assert_eq!(declared_answer(Some(false), true, true, 4, DeclaredDefault::Everyone, true), Some(false));
         assert_eq!(declared_answer(Some(true), true, false, 0, DeclaredDefault::Nobody, true), Some(true));
+    }
+
+    #[test]
+    fn contexts_reply_parses_key_value_lines() {
+        let got = parse_contexts("discordsrv:linked=true\nbad line\ndiscordsrv:role=Staff Team\n=x\nk=\n");
+        assert_eq!(got, vec![("discordsrv:linked".to_owned(), "true".to_owned()), ("discordsrv:role".to_owned(), "Staff Team".to_owned())]);
+        assert!(parse_contexts("").is_empty());
     }
 
     #[test]

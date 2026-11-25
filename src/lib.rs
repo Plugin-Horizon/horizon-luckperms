@@ -255,6 +255,19 @@ impl Hooks for Mod {
                 let _ = host.permission_set_groups(p.uuid, &groups);
             }
         }
+        // DiscordSRV's context calculator: its contexts for each player, when that mod runs (absent: nothing).
+        if let Some(list) = &players {
+            for p in list {
+                let pairs = host
+                    .commands()
+                    .call_mod_service("discordsrv:contexts", format!("{:032x}", p.uuid).as_bytes())
+                    .ok()
+                    .and_then(|r| String::from_utf8(r).ok())
+                    .map(|r| glue::parse_contexts(&r))
+                    .unwrap_or_default();
+                glue::external_contexts(p.uuid, pairs);
+            }
+        }
         // `auto-op`: operator status follows the node `luckperms.autoop` (Bukkit's `setOp`).
         if let Some(list) = &players {
             if glue::auto_op() {
