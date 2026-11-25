@@ -71,6 +71,8 @@ pub struct Config {
     pub meta_value_selection_default: String,
     /// `meta-value-selection`: the strategy per meta key.
     pub meta_value_selection: BTreeMap<String, String>,
+    /// `resolve-command-selectors`: `@p`, `@a[...]` in `/lp` arguments name the one player they select.
+    pub resolve_command_selectors: bool,
     /// `watch-files`: a saved config is reloaded within a second (on by default).
     pub watch_files: bool,
     /// The non-SQL messenger the original file would use (`redis`, `nats`, `rabbitmq`): the port does not
@@ -271,6 +273,7 @@ impl Default for Config {
             default_contexts: BTreeMap::new(),
             apply_bukkit_default_permissions: true,
             auto_op: false,
+            resolve_command_selectors: false,
             require_sender_group_membership: false,
             argument_based_command_permissions: false,
             apply_default_negated_before_wildcards: false,

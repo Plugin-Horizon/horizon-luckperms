@@ -128,9 +128,8 @@ What does not work yet (round 2, 2026-11-25; the item list counts 257 of 263 don
 - A login waits up to `horizon.login-wait-ms` (default 3000) for the player's data and is refused with a reason when the load fails or is late. With `0` the older behaviour returns. Neither path was exercised with a real database.
 - Storage types h2, sqlite, postgresql, mongodb, yaml, json, hocon, yaml-combined and split storage are refused at start; only MariaDB/MySQL and `memory` run.
 - Messaging other than the SQL messenger (redis, nats, rabbitmq, pluginmsg) is refused; `messaging-service` must be `sql` or `auto` for an SQL network.
-- `resolve-command-selectors` is read and noted at start, not applied.
 - The live web-editor socket (bytesocks; `/lp trusteditor`) is not ported: `/lp editor` gives the `applyedits` command instead.
-- Vault and the PlaceholderAPI `%luckperms_*%` expansion need a cross-mod registry (ENGINE_NEEDS `mod_service_registry`). The primary group and group list of every online player are published to the engine (`permission_groups`) every half second for the mods that read them.
+- Vault is not ported. The service `luckperms:placeholder` (`call_mod_service`; payload `<uuid hex> <params>`, e.g. `prefix`, `meta_<key>`) answers the `%luckperms_*%` values for the PlaceholderAPI port. The primary group and group list of every online player are published to the engine (`permission_groups`) every half second for the mods that read them.
 - Translations use the server language (`[horizon] locale`, or the environment variable `LUCKPERMS_LOCALE`), not each player's client language.
 
 Done in round 2: `/lp verbose command` (and `luckperms.verbose.command.others`), `auto-op` (`luckperms.autoop`), `argument-based-command-permissions`, `require-sender-group-membership-to-modify`, `meta-value-selection(-default)`, `apply-default-negated-permissions-before-wildcards`, `/lp translations [install]` with `translations/<locale>.properties`, the node's declared default (`Nobody` included) in the handler (the cargo feature `horizon_handler_default` is gone), Bukkit child permissions (the engine resolves `add_with_children`).

@@ -13,7 +13,7 @@ use crate::horizon_luckperms_core::text as lp_text;
 use crate::horizon_luckperms_core::Recipient;
 use mod_api::{
     Command, CommandArgumentValue, CommandSource, Flow, Hooks, PermissionError,
-    PermissionGatherHandlerEvent, PermissionHandlerQueryEvent, PermissionLevel, PermissionValue, PermissionValueType,
+    ModServiceCallEvent, PermissionGatherHandlerEvent, PermissionHandlerQueryEvent, PermissionLevel, PermissionValue, PermissionValueType,
     PlayerCommandEvent, PlayerCommandsSentEvent, PlayerLoggedInEvent, PlayerLoggedOutEvent, PlayerLoginEvent,
     RegisterCommandsEvent, RunModCommandEvent, ServerAboutToStartEvent,
     ServerHost, ServerStoppingEvent, ServerTickEvent, ServerTickPhase, Suggestion, TabCompleteEvent,
@@ -117,6 +117,34 @@ fn online(host: &dyn ServerHost) -> Vec<OnlinePlayer> {
         })
         .collect()
 }
+
+/// `resolve-command-selectors`: an `@...` word of a typed `/lp` line becomes the name of the one player it selects.
+fn resolve_selectors(host: &mut dyn ServerHost, player: u128, line: &str) -> String {
+    if !glue::resolve_selectors() || !line.contains('@') || !line.trim_start_matches('/').starts_with(ROOTS_PREFIX_CHECK) {
+        return line.to_owned();
+    }
+    let Some(sender) = host.player(player) else { return line.to_owned() };
+    let mut out = Vec::new();
+    for word in line.split(' ') {
+        if word.starts_with('@') {
+            if let Some(found) = host.player_select_entities(sender, word) {
+                let names: Vec<String> = found
+                    .into_iter()
+                    .filter_map(|e| host.players().server_players().into_iter().find(|p| p.entity() == e))
+                    .filter_map(|p| p.name(&*host))
+                    .collect();
+                if names.len() == 1 {
+                    out.push(names[0].clone());
+                    continue;
+                }
+            }
+        }
+        out.push(word.to_owned());
+    }
+    out.join(" ")
+}
+
+const ROOTS_PREFIX_CHECK: [&str; 6] = ["lp", "luckperms", "perm", "perms", "permission", "permissions"];
 
 fn color_name(code: char) -> &'static str {
     match code {
@@ -402,7 +430,8 @@ impl Hooks for Mod {
             return Flow::Cancel;
         }
         // /lp: the core answers later, through the tick.
-        if glue::lp_command(Some((event.player, event.name)), event.command) {
+        let resolved = resolve_selectors(host, event.player, event.command);
+        if glue::lp_command(Some((event.player, event.name)), &resolved) {
             return Flow::Cancel;
         }
         Flow::Continue
@@ -413,6 +442,14 @@ impl Hooks for Mod {
         // the hook only collects names to remove (ENGINE_NEEDS `player_commands_sent_restore`), so a granted
         // vanilla command of a non-operator still runs but is not completed.
         glue::filter_tree(event.player, event.names);
+    }
+
+    fn mod_service_call(&self, _: &mut dyn ServerHost, event: &mut ModServiceCallEvent<'_>) -> Option<Vec<u8>> {
+        if event.service != "luckperms:placeholder" {
+            return None;
+        }
+        let text = std::str::from_utf8(event.payload).ok()?;
+        glue::placeholder(text).map(String::into_bytes)
     }
 
     fn permission_gather_handler(&self, _: &mut dyn ServerHost, event: &mut PermissionGatherHandlerEvent<'_>) {

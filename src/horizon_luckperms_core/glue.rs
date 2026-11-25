@@ -615,3 +615,38 @@ pub fn groups(player: u128) -> Vec<String> {
     }
     all
 }
+
+/// `resolve-command-selectors` is on.
+pub fn resolve_selectors() -> bool {
+    runtime::get().is_some_and(|rt| rt.config().resolve_command_selectors)
+}
+
+/// The placeholder service (`luckperms:placeholder`): payload `<uuid as 32 hex digits> <params>`, reply the value.
+/// Params: `prefix`, `suffix`, `primary_group_name`, `weight`, `groups`, `meta_<key>`, `in_group_<name>`,
+/// `has_permission_<node>`, `check_permission_<node>` (the `%luckperms_*%` names).
+pub fn placeholder(payload: &str) -> Option<String> {
+    use crate::horizon_luckperms_core::api;
+    let (id, params) = payload.split_once(' ')?;
+    let uuid = u128::from_str_radix(id.trim(), 16).ok()?;
+    let p = params.trim();
+    Some(match p {
+        "prefix" => api::prefix(uuid).unwrap_or_default(),
+        "suffix" => api::suffix(uuid).unwrap_or_default(),
+        "primary_group_name" => api::primary_group(uuid).unwrap_or_default(),
+        "weight" => api::weight(uuid).map(|w| w.to_string()).unwrap_or_default(),
+        "groups" => groups(uuid).join(", "),
+        _ => {
+            if let Some(k) = p.strip_prefix("meta_") {
+                api::meta_value(uuid, k).unwrap_or_default()
+            } else if let Some(g) = p.strip_prefix("in_group_") {
+                api::in_group(uuid, g).to_string()
+            } else if let Some(n) = p.strip_prefix("has_permission_") {
+                (permission(uuid, n) == Some(true)).to_string()
+            } else if let Some(n) = p.strip_prefix("check_permission_") {
+                permission(uuid, n).map(|b| b.to_string()).unwrap_or_default()
+            } else {
+                return None;
+            }
+        }
+    })
+}

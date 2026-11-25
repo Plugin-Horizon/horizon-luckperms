@@ -325,9 +325,7 @@ pub fn config_from_yaml(text: &str, reads: &mut Reads) -> Result<Config, String>
         }
 
         // Read and not supported: a non-default value is noted (a key name only, never its value).
-        if k.flag("resolve-command-selectors") == Some(true) {
-            notes.push("resolve-command-selectors (not supported)".into());
-        }
+        set!(k, "resolve-command-selectors", c.resolve_command_selectors);
         if k.flag("update-client-command-list") == Some(false) {
             notes.push("update-client-command-list (set false; the port always updates the list)".into());
         }
