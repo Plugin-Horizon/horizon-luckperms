@@ -14,7 +14,7 @@ use crate::horizon_luckperms_core::Recipient;
 use mod_api::{
     Command, CommandArgumentValue, CommandSource, Flow, Hooks, PermissionError,
     ModServiceCallEvent, PermissionGatherHandlerEvent, PermissionHandlerQueryEvent, PermissionLevel, PermissionValue, PermissionValueType,
-    PlayerCommandEvent, PlayerCommandsSentEvent, PlayerLoggedInEvent, PlayerLoggedOutEvent, PlayerLoginEvent,
+    PlayerCommandEvent, PlayerCommandsSentEvent, PlayerCommandsSentRestoreEvent, PlayerLoggedInEvent, PlayerLoggedOutEvent, PlayerLoginEvent,
     RegisterCommandsEvent, RunModCommandEvent, ServerAboutToStartEvent,
     ServerHost, ServerStoppingEvent, ServerTickEvent, ServerTickPhase, Suggestion, TabCompleteEvent,
     Text,
@@ -438,10 +438,14 @@ impl Hooks for Mod {
     }
 
     fn player_commands_sent(&self, _: &mut dyn ServerHost, event: &mut PlayerCommandsSentEvent<'_>) {
-        // Refused roots leave the player's tree. Roots the level hides cannot be put back for a granted node:
-        // the hook only collects names to remove (ENGINE_NEEDS `player_commands_sent_restore`), so a granted
-        // vanilla command of a non-operator still runs but is not completed.
+        // Refused roots leave the player's tree.
         glue::filter_tree(event.player, event.names);
+    }
+
+    fn player_commands_sent_restore(&self, _: &mut dyn ServerHost, event: &mut PlayerCommandsSentRestoreEvent<'_>) {
+        // A root the player's level hides but a node grants (`minecraft.command.<name>` true) goes back into
+        // the tree the client is shown, so it completes and highlights; the run is answered in `player_command`.
+        glue::unhide_granted(event.player, event.restore, event.hidden);
     }
 
     fn mod_service_call(&self, _: &mut dyn ServerHost, event: &mut ModServiceCallEvent<'_>) -> Option<mod_api::PayloadBytes> {

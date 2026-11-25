@@ -2,7 +2,7 @@
 
 ## Port status
 
-Compared with LuckPerms b878ae9 (master): **98 %** of the original's commands, permissions, config keys, messages and features work today; **98 %** with the combined next SDK; **99 %** with the two engine changes in ENGINE_NEEDS. Counted on 257/263 items (audit item list rec100/luckperms.md). Status: round 2 written, build queued, not yet compiled.
+Compared with LuckPerms b878ae9 (master): **98 %** of the original's commands, permissions, config keys, messages and features work today; **98 %** with the combined next SDK; **99 %** once the Vault provider is ported. Counted on 258/263 items (audit item list rec100/luckperms.md). Status: round 3 written, build queued, not yet compiled.
 
 > **Unofficial Rust port of LuckPerms for the Horizon server (https://github.com/arismoko/horizon). Not affiliated with or endorsed by the LuckPerms authors.**
 
@@ -122,9 +122,9 @@ therefore needs an explicit grant on the `default` group unless the handler can 
 
 ## Known gaps
 
-What does not work yet (round 2, 2026-11-25; the item list counts 257 of 263 done):
+What does not work yet (round 3, 2026-11-25; the item list counts 258 of 263 done):
 
-- A granted vanilla command (`minecraft.command.<name>`) runs for a non-operator (the line is cancelled and run again from the next tick at the level it needs, with the player's own feedback), but the command tree of a non-operator still hides that root: the engine needs `player_commands_sent_restore` (ENGINE_NEEDS).
+- A granted vanilla command (`minecraft.command.<name>`) runs for a non-operator (the line is cancelled and run again from the next tick at the level it needs, with the player's own feedback) and its root is put back into the command tree the client is shown (`player_commands_sent_restore`), so it completes.
 - A login waits up to `horizon.login-wait-ms` (default 3000) for the player's data and is refused with a reason when the load fails or is late. With `0` the older behaviour returns. Neither path was exercised with a real database.
 - Storage types h2, sqlite, postgresql, mongodb, yaml, json, hocon, yaml-combined and split storage are refused at start; only MariaDB/MySQL and `memory` run.
 - Messaging other than the SQL messenger (redis, nats, rabbitmq, pluginmsg) is refused; `messaging-service` must be `sql` or `auto` for an SQL network.

@@ -80,3 +80,5 @@ Round 2 (parity fixes)
 - Gaps still open: granted vanilla commands, other storage backends, verbose/tree/bulkupdate, login refusal (5 s grace).
 - Unsure: a node declared by another mod for everyone (level 0) is denied to non-ops without an explicit
   LuckPerms grant, because the handler cannot read the node's declared default.
+Round 3
+- granted vanilla commands: `player_commands_sent_restore` puts the hidden, granted roots back into the command tree (`glue::unhide_granted`). Item list 258/263; open: Vault provider (E), trusteditor, storage-method, split-storage, messaging-service.
