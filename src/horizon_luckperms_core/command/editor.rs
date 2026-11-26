@@ -15,7 +15,7 @@
 
 use super::args::Args;
 use super::fmt::{self, aq, dred};
-use super::{Ctx, Holder, Loaded, LABEL};
+use super::{Ctx, Holder, Loaded};
 use crate::horizon_luckperms_core::actionlog::{Part, TargetType};
 use crate::horizon_luckperms_core::bytebin::{self, HttpError};
 use crate::horizon_luckperms_core::calc;
@@ -306,7 +306,7 @@ pub(super) fn prepare(c: &mut Ctx<'_>, holders: &[EditorHolder], tracks: &[Track
         uploader = format!("{}@{}", uploader, c.cfg.server);
     }
     let now_ms = crate::horizon_luckperms_core::duration::now() * 1000;
-    let payload = build_payload(holders, tracks, &uploader, c.sender.uuid, LABEL, &potential, now_ms, &crate::horizon_luckperms_core::known::all(&c.cfg));
+    let payload = build_payload(holders, tracks, &uploader, c.sender.uuid, &super::label(), &potential, now_ms, &crate::horizon_luckperms_core::known::all(&c.cfg));
     if personal_data_in(&payload.to_string()) {
         c.msg("\u{a7}cThe editor session was not opened: the data contains something that looks like an IP address, and those are never uploaded. Remove it from the permissions first.");
         return None;
@@ -519,7 +519,7 @@ pub(crate) fn apply_edits(c: &mut Ctx<'_>, mut a: Args) {
         Ok(v @ Value::Object(_)) => v,
         _ => return unable_to_read(c, &code),
     };
-    apply_response(c, &code, &data, LABEL, force);
+    apply_response(c, &code, &data, &super::label(), force);
 }
 
 fn unable_to_read(c: &mut Ctx<'_>, code: &str) {

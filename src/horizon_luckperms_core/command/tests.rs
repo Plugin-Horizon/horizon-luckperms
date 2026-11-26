@@ -1,6 +1,6 @@
 //! `/lp` against the in-memory storage, with a runtime that has no worker.
 
-use super::execute;
+use super::{complete, execute, execute_labelled};
 use crate::horizon_luckperms_core::calc::Tristate;
 use crate::horizon_luckperms_core::config::Config;
 use crate::horizon_luckperms_core::model::Model;
@@ -217,7 +217,7 @@ fn operator_sees_help_and_info() {
 fn unknown_command_lists_the_commands() {
     let (rt, mut st) = setup();
     let out = console(&rt, &mut st, "foo");
-    assert_eq!(out[0], "[LP] Running LuckPerms v5.5.0.");
+    assert_eq!(out[0], "[LP] Running LuckPerms v5.5.88.");
     assert!(out.iter().any(|l| l == "> /lp user <user>"), "{out:?}");
     assert!(out.iter().any(|l| l == "> /lp search <permission>"), "{out:?}");
     // `help` is not a command of its own.
@@ -271,4 +271,43 @@ fn contexts_and_clear_message() {
     assert_eq!(out[0], "[LP] Set a.b to true for default in context server=survival, world=nether.");
     let out = console(&rt, &mut st, "group default permission clear");
     assert_eq!(out[0], "[LP] default's permissions were cleared in context global. (1 node was removed.)");
+}
+
+fn run_label(rt: &Runtime, st: &mut MemoryStorage, label: &str, line: &str) -> Vec<String> {
+    let out = execute_labelled(rt, st, &CommandSender::console(), label, &split_args(line));
+    out.lines.iter().map(|l| crate::horizon_luckperms_core::text::plain(l)).collect()
+}
+
+#[test]
+fn the_banner_and_the_usage_use_the_word_the_player_typed() {
+    // Paper: `/luckperms` -> "Running LuckPerms v5.5.88." + "Use /luckperms help to view available commands."
+    let (rt, mut st) = setup();
+    let out = run_label(&rt, &mut st, "luckperms", "");
+    assert_eq!(out[0], "[LP] Running LuckPerms v5.5.88.");
+    assert_eq!(out[1], "[LP] Use /luckperms help to view available commands.");
+    let out = run_label(&rt, &mut st, "perms", "help");
+    assert!(out.iter().any(|l| l == "> /perms user <user>"), "{out:?}");
+    assert!(out.iter().any(|l| l == "> /perms group <group>"), "{out:?}");
+    assert!(out.iter().any(|l| l == "> /perms search <permission>"), "{out:?}");
+}
+
+#[test]
+fn search_and_permission_set_complete_the_known_permission_tree() {
+    // Paper: `/lp search ` lists the first segments of the permission registry (axiom, bukkit, chunky, ...).
+    let (rt, _st) = setup();
+    crate::horizon_luckperms_core::known::record("axiom.use");
+    crate::horizon_luckperms_core::known::record("chunky.start");
+    let c = complete(&rt, &CommandSender::console(), &sp("search "));
+    assert!(c.contains(&"axiom".to_owned()) && c.contains(&"chunky".to_owned()) && c.contains(&"minecraft".to_owned()), "{c:?}");
+    assert!(c.windows(2).all(|w| w[0] <= w[1]), "{c:?}");
+    let c = complete(&rt, &CommandSender::console(), &sp("search ch"));
+    assert_eq!(c, vec!["chunky".to_owned()]);
+    let c = complete(&rt, &CommandSender::console(), &sp("search chunky."));
+    assert_eq!(c, vec!["chunky.start".to_owned()]);
+    let c = complete(&rt, &CommandSender::console(), &sp("group default permission set ax"));
+    assert_eq!(c, vec!["axiom".to_owned()]);
+}
+
+fn sp(line: &str) -> Vec<String> {
+    line.split(' ').map(str::to_owned).collect()
 }

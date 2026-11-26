@@ -4,7 +4,7 @@
 use super::args::{ArgErr, Args};
 use super::fmt::{self, aq, ctx, ctx_bracketed, dur_aq, white};
 use super::tables::{holder_children, parent_subs, Child, Sub};
-use super::{child_has, Ctx, Holder, Loaded, LABEL};
+use super::{child_has, Ctx, Holder, Loaded};
 use crate::horizon_luckperms_core::actionlog::Part;
 use crate::horizon_luckperms_core::calc::{self, Tristate};
 use crate::horizon_luckperms_core::context::ContextSet;
@@ -21,7 +21,7 @@ pub(crate) fn holder_command(c: &mut Ctx<'_>, user: bool, a: Args) {
     let tag = if user { "user" } else { "group" };
     let children = holder_children(user);
     if a.len() < 2 {
-        let usage = format!("/{LABEL} {tag} <{tag}>");
+        let usage = format!("/{} {tag} <{tag}>", super::label());
         let subs: Vec<(&str, &str)> = {
             let has = |n: &str| c.has(n);
             children.iter().filter(|ch| child_has(&has, tag, ch)).map(|ch| (ch.name, ch.spec)).collect()
@@ -141,7 +141,7 @@ fn generic_parent(c: &mut Ctx<'_>, l: &mut Loaded, ch: &Child, a: Args) {
     let tag = l.h.tag();
     let subs = parent_subs(ch, l.h.is_user());
     if a.is_empty() {
-        let usage = format!("/{LABEL} {tag} <{tag}> {}", ch.name);
+        let usage = format!("/{} {tag} <{tag}> {}", super::label(), ch.name);
         let listed: Vec<(&str, &str)> = subs.iter().filter(|s| c.has(&format!("{tag}.{}", s.node))).map(|s| (s.name, s.spec)).collect();
         c.parent_usage(ch.shown, &usage, &listed);
         return;

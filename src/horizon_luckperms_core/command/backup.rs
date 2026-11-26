@@ -6,7 +6,7 @@ use super::args::Args;
 use super::editor::{http_failure, node_json, parse_node};
 use super::extra::upload;
 use super::track::save_track;
-use super::{Ctx, Holder, Loaded, LABEL};
+use super::{Ctx, Holder, Loaded};
 use crate::horizon_luckperms_core::bytebin;
 use crate::horizon_luckperms_core::duration;
 use crate::horizon_luckperms_core::lang;
@@ -201,7 +201,7 @@ pub(crate) fn export(c: &mut Ctx<'_>, mut a: Args) {
             let Some(code) = upload(c, text) else { return };
             c.msg(format!("\u{a7}a{}: \u{a7}7{code}", lang::T_COMMAND_EXPORT_WEB_EXPORT_CODE));
             c.raw(format!("\u{a7}7{}:", lang::T_COMMAND_EXPORT_WEB_IMPORT_COMMAND_DESCRIPTION));
-            c.raw(format!("\u{a7}a/{LABEL} import {code} --upload"));
+            c.raw(format!("\u{a7}a/{} import {code} --upload", super::label()));
         }
         Some(p) => {
             if let Err(e) = std::fs::write(&p, pack(text.as_bytes())) {

@@ -607,7 +607,7 @@ mod nats_messenger {
                 "tls_required": tls_required,
                 "name": "LuckPerms",
                 "lang": "rust",
-                "version": "5.5.0",
+                "version": "5.5.88",
                 "protocol": 1,
                 "echo": true,
             });

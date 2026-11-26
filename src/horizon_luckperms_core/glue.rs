@@ -375,7 +375,7 @@ pub fn lp_command(sender: Option<(u128, &str)>, command: &str) -> bool {
         Some((uuid, name)) => CommandSender { uuid, name: name.to_owned(), console: false },
         None => CommandSender::console(),
     };
-    rt.submit_command(s, rest);
+    rt.submit_command_labelled(s, &root, rest);
     true
 }
 

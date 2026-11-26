@@ -86,7 +86,7 @@ enum Job {
     Login { uuid: u128, name: String },
     /// Loads the player's data before they are placed; `done` gets the answer on the worker thread.
     PreLogin { uuid: u128, name: String, done: PreLoginDone },
-    Command { sender: CommandSender, args: Vec<String>, silent: bool },
+    Command { sender: CommandSender, label: String, args: Vec<String>, silent: bool },
     SyncAll { push: bool },
     /// A frame the web editor sent over its live socket (see `editorsocket`).
     SocketFrame { owner: u128, generation: u64, text: String },
@@ -534,12 +534,17 @@ impl Runtime {
 
     /// Runs `/lp <args>` on the worker; the answer arrives through the outbox.
     pub fn submit_command(&self, sender: CommandSender, line: &str) {
+        self.submit_command_labelled(sender, command::LABEL, line);
+    }
+
+    /// Like `submit_command`, for a command typed as `/<label> ...`.
+    pub fn submit_command_labelled(&self, sender: CommandSender, label: &str, line: &str) {
         if self.rate_limited(&sender) {
             log(&format!("Player '{}' is spamming LuckPerms commands. Ignoring further inputs.", crate::horizon_luckperms_core::uuid::format(sender.uuid)));
             return;
         }
         let args = crate::horizon_luckperms_core::text::split_args(line);
-        self.send(Job::Command { sender, args, silent: false });
+        self.send(Job::Command { sender, label: label.to_owned(), args, silent: false });
     }
 
     /// `CommandManager.executeCommand`'s rate limit (`commands-rate-limit`): a player's command within 500 ms of
@@ -561,7 +566,7 @@ impl Runtime {
 
     /// Runs `/lp <args>` without answering anyone: what the Vault provider uses for its writes.
     pub fn submit_silent(&self, sender: CommandSender, args: Vec<String>) {
-        self.send(Job::Command { sender, args, silent: true });
+        self.send(Job::Command { sender, label: command::LABEL.to_owned(), args, silent: true });
     }
 
     pub fn reload_config(&self, cfg: Config) {
@@ -659,8 +664,8 @@ impl Worker {
                     done(Err(PRE_LOGIN_REFUSAL.to_owned()));
                 }
             },
-            Job::Command { sender, args, silent } => {
-                let mut out = command::execute(&self.rt, self.storage.as_mut(), &sender, &args);
+            Job::Command { sender, label, args, silent } => {
+                let mut out = command::execute_labelled(&self.rt, self.storage.as_mut(), &sender, &label, &args);
                 if silent {
                     out.lines.clear();
                 }

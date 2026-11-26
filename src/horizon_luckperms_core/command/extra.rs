@@ -2,7 +2,7 @@
 
 use super::args::Args;
 use super::fmt::{aq, dred, green};
-use super::{Ctx, Holder, LABEL};
+use super::{Ctx, Holder};
 use crate::horizon_luckperms_core::bytebin;
 use crate::horizon_luckperms_core::context::ContextSet;
 use crate::horizon_luckperms_core::known;
@@ -187,7 +187,7 @@ pub(crate) fn translations(c: &mut Ctx<'_>, a: Args) {
         ));
     }
     c.raw(String::new());
-    c.msg(format!("{}.", tr(lang::T_COMMAND_TRANSLATIONS_DOWNLOAD_PROMPT, 'b', &[green(&format!("/{LABEL} translations install"))])));
+    c.msg(format!("{}.", tr(lang::T_COMMAND_TRANSLATIONS_DOWNLOAD_PROMPT, 'b', &[green(&format!("/{} translations install", super::label()))])));
     c.msg(tr(lang::T_COMMAND_TRANSLATIONS_DOWNLOAD_OVERRIDE_WARNING, 'c', &[]));
 }
 
@@ -629,7 +629,7 @@ pub(crate) fn bulkupdate(c: &mut Ctx<'_>, a: Args) {
     let readable = op.readable();
     pending(|m| m.insert(id.clone(), (op, Instant::now())));
     c.msg(format!("{}. \u{a7}7(\u{a7}f{readable}\u{a7}7)", tr(lang::T_COMMAND_BULKUPDATE_QUEUED, 'a', &[])));
-    c.msg(format!("{}.", tr(lang::T_COMMAND_BULKUPDATE_CONFIRM, 'a', &[aq(&format!("/{LABEL} bulkupdate confirm {id}"))])));
+    c.msg(format!("{}.", tr(lang::T_COMMAND_BULKUPDATE_CONFIRM, 'a', &[aq(&format!("/{} bulkupdate confirm {id}", super::label()))])));
 }
 
 #[cfg(test)]

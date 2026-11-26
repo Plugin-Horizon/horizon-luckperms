@@ -5,7 +5,7 @@
 //! editor's reply and making the follow-up session.
 
 use super::editor::{apply_response, group_holder, lock_sessions, post, prepare, user_holder, EditorHolder};
-use super::{CmdOutput, Ctx, Holder, LABEL};
+use super::{CmdOutput, Ctx, Holder};
 use crate::horizon_luckperms_core::bytebin::{self, HttpError};
 use crate::horizon_luckperms_core::context::ContextSet;
 use crate::horizon_luckperms_core::editorsocket::{self as sock, Env, FrameSink, Notice, Who};
@@ -126,7 +126,7 @@ impl Env for SocketEnv<'_, '_> {
             Notice::Untrusted { nonce, browser } => {
                 c.msg(format!("{}.", tr(lang::T_COMMAND_EDITOR_SOCKET_UNTRUSTED, 'b', &[])));
                 c.msg(format!("\u{a7}8({}\u{a7}8)", tr(lang::T_COMMAND_EDITOR_SOCKET_UNTRUSTED_SESSIONINFO, '7', &[format!("\u{a7}f{nonce}"), format!("\u{a7}f{browser}")])));
-                let command = format!("/{LABEL} trusteditor {nonce}");
+                let command = format!("/{} trusteditor {nonce}", super::label());
                 if c.sender.console {
                     c.msg(tr(lang::T_COMMAND_EDITOR_SOCKET_UNTRUSTED_PROMPT_RUNCOMMAND, '7', &[format!("\u{a7}a{command}")]));
                 } else {
