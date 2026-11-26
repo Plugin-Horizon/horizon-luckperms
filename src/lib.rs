@@ -225,6 +225,11 @@ fn line_text(line: &str) -> Text {
     root
 }
 
+/// The one place the plugin-message send is called (the engine's `send_plugin_message` on the player handle).
+fn send_plugin_frame(host: &mut dyn ServerHost, player: &mod_api::PlayerRef, id: &Identifier, frame: &[u8]) {
+    let _ = player.send_plugin_message(&mut *host, id, frame);
+}
+
 #[mod_api::horizon_mod]
 impl Hooks for Mod {
     #[allow(unused_variables)]
@@ -260,7 +265,7 @@ impl Hooks for Mod {
                     Some(player) => {
                         let id = Identifier::parse(crate::horizon_luckperms_core::messenger_wave2::PLUGIN_CHANNEL).expect("a valid channel id");
                         for f in &frames {
-                            let _ = host.player_send_plugin_message(player, &id, f);
+                            let _ = send_plugin_frame(host, &player, &id, f);
                         }
                     }
                     None => crate::horizon_luckperms_core::messenger_wave2::requeue_outgoing(frames),
