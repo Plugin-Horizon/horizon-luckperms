@@ -439,6 +439,17 @@ pub fn complete(player: u128, name: &str, command: &str) -> Option<(usize, Vec<S
     Some((last_start, rt.complete(&sender, &args)))
 }
 
+/// Completions for the argument being typed of `/lp`: `args` are the words after the root, the last one partial
+/// (a player's name and uuid, or `None` for the console).
+pub fn complete_words(player: Option<(u128, &str)>, args: &[String]) -> Vec<String> {
+    let Some(rt) = runtime::get() else { return Vec::new() };
+    let sender = match player {
+        Some((uuid, name)) => CommandSender { uuid, name: name.to_owned(), console: false },
+        None => CommandSender::console(),
+    };
+    rt.complete(&sender, args)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

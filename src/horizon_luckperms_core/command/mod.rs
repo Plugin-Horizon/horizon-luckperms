@@ -15,6 +15,7 @@ mod misc;
 pub mod specs;
 mod tables;
 mod track;
+pub mod tree;
 mod usage;
 
 use crate::horizon_luckperms_core::actionlog::{Action, Part, TargetType};

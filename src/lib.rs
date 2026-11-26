@@ -12,11 +12,12 @@ use crate::horizon_luckperms_core::runtime::OnlinePlayer;
 use crate::horizon_luckperms_core::text as lp_text;
 use crate::horizon_luckperms_core::Recipient;
 use mod_api::{
-    Command, CommandArgumentValue, CommandSource, Flow, Hooks, PermissionError,
+    Command, CommandArgumentError, CommandArgumentKind, CommandArgumentType, CommandArgumentValue, CommandSource, CommandSuggestion,
+    NodeDefault, PermissionGatherNodesEvent, PermissionNode, RegisterNodeCommandsEvent, Registrar, RegistrationContext, Flow, Hooks, PermissionError,
     ModServiceCallEvent, PermissionGatherHandlerEvent, PermissionHandlerQueryEvent, PermissionLevel, PermissionValue, PermissionValueType,
     PlayerCommandEvent, PlayerCommandsSentEvent, PlayerCommandsSentRestoreEvent, PlayerLoggedInEvent, PlayerLoggedOutEvent, PlayerLoginEvent,
     RegisterCommandsEvent, RunModCommandEvent, ServerAboutToStartEvent,
-    ServerHost, ServerStoppingEvent, ServerTickEvent, ServerTickPhase, Suggestion, TabCompleteEvent,
+    ServerHost, ServerStoppingEvent, ServerTickEvent, ServerTickPhase,
     Text,
 };
 use mod_api::Identifier;
@@ -86,6 +87,54 @@ const HANDLER_ID: &str = "luckperms:permissions";
 
 #[derive(Default)]
 struct Mod;
+
+/// The command tree of `/lp` (see `command/tree.rs`), built once.
+fn tree() -> &'static crate::horizon_luckperms_core::command::tree::Tree {
+    static TREE: std::sync::OnceLock<crate::horizon_luckperms_core::command::tree::Tree> = std::sync::OnceLock::new();
+    TREE.get_or_init(crate::horizon_luckperms_core::command::tree::build)
+}
+
+/// The other roots `/lp` answers to, as aliases of every usage.
+fn with_aliases(mut command: Command) -> Command {
+    for root in ROOTS.iter().skip(1) {
+        command = command.alias(root);
+    }
+    command
+}
+
+/// The completion type of one place of the tree: the holder names and the tail of a leaf. It asks the port's own
+/// completion (`/lp` tab completion by position) with the command words in front of the typed text.
+struct LpArgument {
+    words: Vec<String>,
+    greedy: bool,
+}
+
+impl CommandArgumentType for LpArgument {
+    fn kind(&self) -> CommandArgumentKind {
+        if self.greedy { CommandArgumentKind::Greedy } else { CommandArgumentKind::Word }
+    }
+
+    fn parse(&self, input: &str) -> Result<String, CommandArgumentError> {
+        Ok(input.to_owned())
+    }
+
+    fn suggest(&self, sender: Option<&mod_api::CommandSender>, prefix: &str) -> Vec<CommandSuggestion> {
+        let (head, last) = match prefix.rfind(' ') {
+            Some(i) => (&prefix[..=i], &prefix[i + 1..]),
+            None => ("", prefix),
+        };
+        let mut args = self.words.clone();
+        args.extend(head.split(' ').filter(|w| !w.is_empty()).map(str::to_owned));
+        args.push(last.to_owned());
+        glue::complete_words(sender.map(|s| (s.uuid(), s.name())), &args)
+            .into_iter()
+            .map(|word| {
+                let suggestion = CommandSuggestion::new(word);
+                if head.is_empty() { suggestion } else { suggestion.replacing_from(head.len()) }
+            })
+            .collect()
+    }
+}
 
 /// The level name Paper's world contexts are built from (`server.properties` `level-name`).
 /// The file is read for that one key only; nothing is printed.
@@ -426,14 +475,37 @@ impl Hooks for Mod {
         glue::logout(event.player);
     }
 
+    fn register(&self, registrar: &mut dyn Registrar, _: &RegistrationContext) {
+        for tail in &tree().tails {
+            registrar.register_command_argument(&tail.id, LpArgument { words: tail.words.clone(), greedy: tail.greedy });
+        }
+    }
+
     fn register_commands(&self, _: &mut dyn ServerHost, event: &mut RegisterCommandsEvent<'_>) {
-        // Only one usage per root, with a free text argument: a console line then reaches run_mod_command
-        // whole. The port's per-word usages (for the client's completion) are not registered: arismoko would
-        // parse them into typed literals and arguments that cannot be turned back into the typed line.
-        // The typed line of a player's /lp is taken whole in `player_command` and its completion is answered by
-        // `tab_complete`; the console reaches `run_mod_command` through the free text argument.
-        for root in ROOTS {
-            event.commands.push(Command::new(&format!("{root} [args:text]")));
+        // The whole tree of `/lp` (user|group|track|log and every main command, `command/tree.rs`) so the client
+        // lists the sub commands and their arguments and completes the names. The typed line of a player's /lp is
+        // still taken whole in `player_command`; the console reaches `run_mod_command` through the parsed tree and
+        // `rebuild` gives the line back. A leaf asks its `luckperms.*` node (`register_node_commands`); the traversal
+        // prefixes stay operator level.
+        for usage in tree().usages.iter().filter(|u| u.node.is_none()) {
+            event.commands.push(with_aliases(Command::op(&usage.usage, 2)));
+        }
+    }
+
+    fn register_node_commands(&self, _: &mut dyn ServerHost, event: &mut RegisterNodeCommandsEvent<'_>) {
+        for usage in tree().usages.iter() {
+            if let Some(node) = &usage.node {
+                event.commands.push(with_aliases(Command::op(&usage.usage, 2)).with_node(&PermissionNode::new(node, PermissionValueType::Boolean)));
+            }
+        }
+    }
+
+    fn permission_gather_nodes(&self, event: &mut PermissionGatherNodesEvent<'_>) {
+        // The nodes the tree asks (`luckperms.user.permission.set`, ...), operator level as Bukkit's `default: op`.
+        for usage in tree().usages.iter() {
+            if let Some(node) = &usage.node {
+                let _ = event.nodes.add(PermissionNode::new(node, PermissionValueType::Boolean), NodeDefault::Level(PermissionLevel::from_level(2)));
+            }
         }
     }
 
@@ -446,14 +518,20 @@ impl Hooks for Mod {
             }
             _ => None,
         };
-        let Some(root) = event.command.literals.first() else {
+        if event.command.literals.is_empty() {
             return Flow::Continue;
-        };
-        let rest = match event.command.argument("args") {
-            Some(CommandArgumentValue::String(s)) => s.as_str(),
-            _ => "",
-        };
-        let line = if rest.is_empty() { root.clone() } else { format!("{root} {rest}") };
+        }
+        let values: Vec<(String, String)> = event
+            .command
+            .arguments
+            .iter()
+            .filter_map(|a| match &a.value {
+                CommandArgumentValue::String(s) => Some((a.name.clone(), s.clone())),
+                CommandArgumentValue::Custom { value, .. } => Some((a.name.clone(), value.clone())),
+                _ => None,
+            })
+            .collect();
+        let line = crate::horizon_luckperms_core::command::tree::rebuild(&tree().usages, &event.command.literals, &values);
         let sent = match &sender {
             Some((uuid, name)) => glue::lp_command(Some((*uuid, name.as_str())), &line),
             None => glue::lp_command(None, &line),
@@ -554,16 +632,6 @@ impl Hooks for Mod {
             None if event.online.is_some() => Err(PermissionError::NotInitialized),
             None => Err(PermissionError::UnknownPlayer),
         })
-    }
-
-    fn tab_complete(&self, _: &mut dyn ServerHost, event: &mut TabCompleteEvent<'_>) {
-        let Some((start, words)) = glue::complete(event.player, event.name, event.command) else {
-            return;
-        };
-        let end = event.command.len();
-        for word in words {
-            event.suggestions.push(Suggestion::new((start, end), word));
-        }
     }
 }
 
