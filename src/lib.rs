@@ -19,6 +19,7 @@ use mod_api::{
     ServerHost, ServerStoppingEvent, ServerTickEvent, ServerTickPhase, Suggestion, TabCompleteEvent,
     Text,
 };
+use mod_api::Identifier;
 use mod_api::text::{TextClick, TextHover, TextStyle};
 use std::collections::HashMap;
 use std::path::Path;
@@ -259,7 +260,7 @@ impl Hooks for Mod {
                     Some(player) => {
                         let id = Identifier::parse(crate::horizon_luckperms_core::messenger_wave2::PLUGIN_CHANNEL).expect("a valid channel id");
                         for f in &frames {
-                            let _ = player.send_plugin_message(&mut *host, &id, f);
+                            let _ = host.player_send_plugin_message(player, &id, f);
                         }
                     }
                     None => crate::horizon_luckperms_core::messenger_wave2::requeue_outgoing(frames),
@@ -273,9 +274,16 @@ impl Hooks for Mod {
         // The groups go to the engine for the mods that read them (TAB, Vault-style callers): `permission_groups`.
         if let Some(list) = &players {
             for p in list {
+                let (prefix, suffix, group_meta) = glue::meta_of(p.uuid);
                 let groups = mod_api::PermissionGroups {
                     primary: glue::primary_group(p.uuid),
                     groups: glue::groups(p.uuid),
+                    prefix,
+                    suffix,
+                    group_meta: group_meta
+                        .into_iter()
+                        .map(|(group, prefix, suffix)| mod_api::GroupMeta { group, prefix, suffix })
+                        .collect(),
                 };
                 let _ = host.permission_set_groups(p.uuid, &groups);
             }

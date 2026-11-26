@@ -618,6 +618,15 @@ pub fn groups(player: u128) -> Vec<String> {
     all
 }
 
+/// The prefix and suffix of the player and of each of their groups, for `permission_groups`.
+pub fn meta_of(player: u128) -> (Option<String>, Option<String>, Vec<(String, Option<String>, Option<String>)>) {
+    (
+        crate::horizon_luckperms_core::api::prefix(player).filter(|p| !p.is_empty()),
+        crate::horizon_luckperms_core::api::suffix(player).filter(|p| !p.is_empty()),
+        crate::horizon_luckperms_core::api::group_meta(player),
+    )
+}
+
 /// `resolve-command-selectors` is on.
 pub fn resolve_selectors() -> bool {
     runtime::get().is_some_and(|rt| rt.config().resolve_command_selectors)
