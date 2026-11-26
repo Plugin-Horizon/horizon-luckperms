@@ -7,8 +7,8 @@
 //! optional TLS. Both keep a thread that reads and reconnects after five seconds; `send` and `poll` never block
 //! on the network for long and run on the worker thread, never on the tick.
 //!
-//! RabbitMQ (an AMQP client), PostgreSQL's LISTEN/NOTIFY (a PostgreSQL client) and plugin messaging (a player
-//! connection plus a relay on the proxy, which a mod's registered payload channels do not give) are refused.
+//! RabbitMQ (`lapin`), PostgreSQL's LISTEN/NOTIFY (`postgres`) and plugin messaging (a plugin channel through a
+//! player's connection to a relay on the proxy) are in `messenger_wave2.rs`.
 
 use crate::horizon_luckperms_core::config::{Config, Messaging};
 
@@ -31,24 +31,9 @@ pub fn open(cfg: &Config) -> Result<Option<Box<dyn Messenger>>, String> {
         Messaging::Redis => open_redis(cfg).map(Some),
         Messaging::Nats => open_nats(cfg).map(Some),
         Messaging::PluginMsg => Ok(Some(Box::new(crate::horizon_luckperms_core::messenger_wave2::PluginMessenger))),
-        #[cfg(feature = "wave2")]
         Messaging::Postgres => crate::horizon_luckperms_core::messenger_wave2::open_postgres(cfg).map(Some),
-        #[cfg(feature = "wave2")]
         Messaging::Rabbit => crate::horizon_luckperms_core::messenger_wave2::open_rabbitmq(cfg).map(Some),
-        #[cfg(not(feature = "wave2"))]
-        Messaging::Postgres | Messaging::Rabbit => Err("built without the wave2 feature".into()),
-        Messaging::Refused(what) => Err(refusal(what)),
         Messaging::Sql | Messaging::Off => Ok(None),
-    }
-}
-
-/// Why a named service cannot run.
-pub fn refusal(what: &str) -> String {
-    match what {
-        "rabbitmq" => "messaging service rabbitmq needs the wave2 build (the AMQP client of fam-mod-deps-db-clients)".into(),
-        "postgresql" => "messaging service postgresql needs the wave2 build (the PostgreSQL client of fam-mod-deps-db-clients)".into(),
-        "pluginmsg" => "messaging service pluginmsg needs the wave2 build: it sends plugin messages over a player's connection to a relay on the proxy, which needs the plugin channels of fam-provider-bridges".into(),
-        other => format!("messaging service {other} is not available"),
     }
 }
 
@@ -1090,26 +1075,16 @@ mod tests {
     }
 
     #[test]
-    fn refusals_say_why() {
-        assert!(refusal("rabbitmq").contains("AMQP"));
-        assert!(refusal("postgresql").contains("PostgreSQL client"));
-        assert!(refusal("pluginmsg").contains("proxy"));
-    }
-
-    #[test]
     fn secrets_are_scrubbed() {
         assert_eq!(scrub("login failed for hunter2-x".into(), &["hunter2-x", "ab"]), "login failed for ***");
     }
 
     #[test]
-    fn open_picks_nothing_for_sql_and_refuses_the_unavailable() {
+    fn open_picks_nothing_for_sql_and_opens_plugin_messaging() {
         let mut c = Config::default();
         assert!(open(&c).unwrap().is_none(), "auto with MariaDB is the SQL messenger, carried by the storage");
-        c.rabbitmq.enabled = true;
-        assert!(open(&c).err().unwrap().contains("AMQP"));
-        let mut c = Config::default();
         c.messaging_service = "pluginmsg".into();
-        assert!(open(&c).err().unwrap().contains("pluginmsg"));
+        assert_eq!(open(&c).unwrap().unwrap().name(), "PluginMessage");
         let mut c = Config::default();
         c.storage.method = "yaml".into();
         assert!(open(&c).unwrap().is_none());

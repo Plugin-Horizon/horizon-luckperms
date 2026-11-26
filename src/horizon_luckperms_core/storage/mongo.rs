@@ -1,7 +1,7 @@
 //! `storage-method: mongodb`: LuckPerms' `MongoStorage` document layout (collections `<prefix>users`, `groups`,
 //! `tracks`, `uuid` and `action`; ids are legacy-Java UUID binaries), on the official driver's blocking API.
-//! Wave 2: needs the `mongodb` 3 and `bson` 3 crates that the branch fam-mod-deps-db-clients adds to
-//! `horizon-mod-deps`, behind the cargo feature `wave2`. Not compiled yet: the crates are not in this SDK.
+//! Uses the `mongodb` 3 and `bson` 3 crates that
+//! `horizon-mod-deps` lists.
 
 use super::{diff, HolderKey, KeyMatch, PlayerRow, PlayerSave, Result, Storage};
 use crate::horizon_luckperms_core::actionlog::{Action, TargetType};

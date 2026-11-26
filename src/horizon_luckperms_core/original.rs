@@ -291,9 +291,6 @@ pub fn config_from_yaml(text: &str, reads: &mut Reads) -> Result<Config, String>
         if let Some(v) = k.text("data.mongodb-connection-uri") {
             c.storage.mongodb_connection_uri = v;
         }
-        if let Some(m) = c.messenger_refused() {
-            notes.push(format!("messaging-service: {m} is not supported (messaging off)"));
-        }
 
         // `SYNC_TIME`: `sync-minutes`, else `data.sync-minutes`.
         if let Some(v) = k.number("sync-minutes") {
@@ -648,10 +645,8 @@ auto-op: false
         assert_eq!(c.nats.token, "not-a-token");
         let (c, _) = load("redis:\n  enabled: true\nnats:\n  enabled: true\n");
         assert_eq!(c.messaging(), Messaging::Redis);
-        // RabbitMQ cannot run here: refused, and said so at start.
         let (c, _) = load("rabbitmq:\n  enabled: true\n");
-        assert_eq!(c.messenger_refused(), Some("rabbitmq"));
-        assert!(c.unsupported.iter().any(|n| n.starts_with("messaging-service: rabbitmq")));
+        assert_eq!(c.messaging(), Messaging::Rabbit);
         // An explicit sql service ignores the enabled flags.
         let (c, _) = load("messaging-service: sql\nredis:\n  enabled: true\n");
         assert_eq!(c.messaging(), Messaging::Sql);
@@ -668,9 +663,9 @@ auto-op: false
         let (c, _) = load("storage-method: yaml\n");
         assert_eq!(c.messaging(), Messaging::Off);
         let (c, _) = load("storage-method: postgresql\n");
-        assert_eq!(c.messenger_refused(), Some("postgresql"));
+        assert_eq!(c.messaging(), Messaging::Postgres);
         let (c, _) = load("messaging-service: pluginmsg\n");
-        assert_eq!(c.messenger_refused(), Some("pluginmsg"));
+        assert_eq!(c.messaging(), Messaging::PluginMsg);
     }
 
     #[test]

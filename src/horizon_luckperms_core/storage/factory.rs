@@ -66,24 +66,12 @@ fn sql(_cfg: &Config) -> Result<Box<dyn Storage>> {
     Err("built without the mysql feature".into())
 }
 
-#[cfg(feature = "wave2")]
 fn postgres(cfg: &Config) -> Result<Box<dyn Storage>> {
     Ok(Box::new(super::postgres::PostgresStorage::new(&cfg.storage)?))
 }
 
-#[cfg(not(feature = "wave2"))]
-fn postgres(_cfg: &Config) -> Result<Box<dyn Storage>> {
-    Err("storage method postgresql needs the wave2 build (the PostgreSQL client of fam-mod-deps-db-clients; use mariadb, mysql, sqlite or a file storage meanwhile)".into())
-}
-
-#[cfg(feature = "wave2")]
 fn mongo(cfg: &Config) -> Result<Box<dyn Storage>> {
     Ok(Box::new(super::mongo::MongoStorage::new(&cfg.storage)?))
-}
-
-#[cfg(not(feature = "wave2"))]
-fn mongo(_cfg: &Config) -> Result<Box<dyn Storage>> {
-    Err("storage method mongodb needs the wave2 build (the MongoDB client of fam-mod-deps-db-clients; use mariadb, mysql, sqlite or a file storage meanwhile)".into())
 }
 
 #[cfg(feature = "net")]
@@ -125,10 +113,7 @@ mod tests {
     #[test]
     fn methods_that_cannot_run_say_why() {
         let d = Dir::new();
-        let mut wanted = vec![("h2", "Java database engine")];
-        if !cfg!(feature = "wave2") {
-            wanted.extend([("postgresql", "PostgreSQL client"), ("mongodb", "MongoDB client")]);
-        }
+        let wanted = vec![("h2", "Java database engine")];
         for (m, why) in wanted {
             let e = open(&cfg(m, &d)).err().unwrap();
             assert!(e.contains(m) && e.contains(why), "{e}");

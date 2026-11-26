@@ -228,10 +228,8 @@ fn line_text(line: &str) -> Text {
 impl Hooks for Mod {
     #[allow(unused_variables)]
     fn server_about_to_start(&self, host: &mut dyn ServerHost, _: &mut ServerAboutToStartEvent) {
-        // Wave 2 (fam-provider-bridges, API names from its draft; not compiled yet): the plugin channel the
-        // `messaging-service: pluginmsg` messenger runs on.
-        #[cfg(feature = "wave2")]
-        host.register_plugin_channel(&crate::horizon_luckperms_core::messenger_wave2::PLUGIN_CHANNEL.parse().expect("a valid channel id"));
+        // The plugin channel the `messaging-service: pluginmsg` messenger runs on.
+        let _ = host.register_plugin_channel(&Identifier::parse(crate::horizon_luckperms_core::messenger_wave2::PLUGIN_CHANNEL).expect("a valid channel id"));
         // The core reads plugins/LuckPerms/config.yml when it exists (unchanged, never written), else
         // config/luckperms.toml (written with the defaults on first start, the password empty).
         glue::start(Path::new("config"), &level_name());
@@ -241,7 +239,6 @@ impl Hooks for Mod {
         glue::stop();
     }
 
-    #[cfg(feature = "wave2")]
     fn plugin_message(&self, _: &mut dyn ServerHost, event: &mut mod_api::PluginMessageEvent<'_>) {
         if event.channel.to_string() == crate::horizon_luckperms_core::messenger_wave2::PLUGIN_CHANNEL {
             crate::horizon_luckperms_core::messenger_wave2::plugin_message_received(event.data);
@@ -253,17 +250,16 @@ impl Hooks for Mod {
         if !matches!(event.phase, ServerTickPhase::ServerTickStart { .. }) {
             return;
         }
-        // Wave 2: frames of the pluginmsg messenger leave through a player; with nobody online they wait.
-        #[cfg(feature = "wave2")]
+        // Frames of the pluginmsg messenger leave through a player; with nobody online they wait.
         {
             let frames = crate::horizon_luckperms_core::messenger_wave2::take_outgoing();
             if !frames.is_empty() {
                 let carrier = online(&*host).first().map(|p| p.uuid);
                 match carrier.and_then(|u| host.player(u)) {
                     Some(player) => {
-                        let id = crate::horizon_luckperms_core::messenger_wave2::PLUGIN_CHANNEL.parse().expect("a valid channel id");
+                        let id = Identifier::parse(crate::horizon_luckperms_core::messenger_wave2::PLUGIN_CHANNEL).expect("a valid channel id");
                         for f in &frames {
-                            player.send_plugin_message(&mut *host, &id, f);
+                            let _ = player.send_plugin_message(&mut *host, &id, f);
                         }
                     }
                     None => crate::horizon_luckperms_core::messenger_wave2::requeue_outgoing(frames),

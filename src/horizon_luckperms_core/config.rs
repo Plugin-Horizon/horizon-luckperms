@@ -325,12 +325,10 @@ pub enum Messaging {
     Sql,
     Redis,
     Nats,
-    /// Wave 2 (cargo feature `wave2`): AMQP, LISTEN/NOTIFY and plugin messages.
+    /// AMQP, LISTEN/NOTIFY and plugin messages.
     Rabbit,
     Postgres,
     PluginMsg,
-    /// A service that is named but cannot run in this build: `rabbitmq`, `postgresql`, `pluginmsg` without `wave2`.
-    Refused(&'static str),
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -560,19 +558,11 @@ impl Config {
         match kind.as_str() {
             "redis" if self.redis.enabled => Messaging::Redis,
             "nats" if self.nats.enabled => Messaging::Nats,
-            "rabbitmq" if self.rabbitmq.enabled => if cfg!(feature = "wave2") { Messaging::Rabbit } else { Messaging::Refused("rabbitmq") },
-            "pluginmsg" | "bungee" | "velocity" => if cfg!(feature = "wave2") { Messaging::PluginMsg } else { Messaging::Refused("pluginmsg") },
-            "postgresql" => if cfg!(feature = "wave2") { Messaging::Postgres } else { Messaging::Refused("postgresql") },
+            "rabbitmq" if self.rabbitmq.enabled => Messaging::Rabbit,
+            "pluginmsg" | "bungee" | "velocity" => Messaging::PluginMsg,
+            "postgresql" => Messaging::Postgres,
             "sql" => Messaging::Sql,
             _ => Messaging::Off,
-        }
-    }
-
-    /// The service that was asked for and cannot run here (`rabbitmq`, `postgresql`, `pluginmsg`).
-    pub fn messenger_refused(&self) -> Option<&'static str> {
-        match self.messaging() {
-            Messaging::Refused(n) => Some(n),
-            _ => None,
         }
     }
 

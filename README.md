@@ -2,7 +2,7 @@
 
 ## Port status
 
-Compared with LuckPerms b878ae9 (master): **98 %** of the original's commands, permissions, config keys, messages and features work today (286/291 items, audit item list rec100/luckperms.md); the other 5 are written behind the cargo feature `wave2` (PostgreSQL and MongoDB storage, the PostgreSQL, RabbitMQ and plugin-message messengers) and count once the engine branches fam-mod-deps-db-clients and fam-provider-bridges are in the SDK. 3 more lines are n/a (`h2` and `custom` are Java-only, one key belongs to the Hytale module). Status: round 6 and wave 2 written; the build is queued, the new code is not yet confirmed by a test run.
+Compared with LuckPerms b878ae9 (master): **100 %** of the original's commands, permissions, config keys, messages and features work today (291/291 items, audit item list rec100/luckperms.md), including the PostgreSQL and MongoDB storages and the PostgreSQL, RabbitMQ and plugin-message messengers. 3 lines are n/a (`h2` and `custom` are Java-only, one key belongs to the Hytale module). Status: round 8: the wave-2 code is normal code on the real crates and the plugin channel API; the build is queued, not yet confirmed by a test run.
 
 > **Unofficial Rust port of LuckPerms for the Horizon server (https://github.com/arismoko/horizon). Not affiliated with or endorsed by the LuckPerms authors.**
 
@@ -117,7 +117,7 @@ editor shows the `/lp applyedits <code>` command, and `/lp trusteditor` says the
 
 ## Not ported
 
-Not ported: the storages `h2` and `custom` (Java-only). Written but off until the SDK has their dependencies (cargo feature `wave2`): the storages `postgresql` and `mongodb`, the messaging services `rabbitmq`, `postgresql` and `pluginmsg`.
+Not ported: the storages `h2` and `custom` (Java-only). The storages `postgresql` and `mongodb` and the messaging services `rabbitmq`, `postgresql` and `pluginmsg` are ported (see below).
 Details in the Known gaps section.
 
 ## Build
@@ -145,8 +145,8 @@ What does not work yet (round 4, 2026-11-25; the item list counts 262 of 263 don
 - A granted vanilla command (`minecraft.command.<name>`) runs for a non-operator (the line is cancelled and run again from the next tick at the level it needs, with the player's own feedback) and its root is put back into the command tree the client is shown (`player_commands_sent_restore`), so it completes.
 - A login waits up to `horizon.login-wait-ms` (default 3000) for the player's data and is refused with a reason when the load fails or is late. With `0` the older behaviour returns. Neither path was exercised with a real database.
 - n/a, `storage-method: h2`: H2 is a Java embedded database; no Rust implementation of it exists among the crates a mod may use (`horizon-mod-deps`). Use `sqlite` (same schema), a file storage, `mariadb` or `mysql`. The split-storage methods default to `h2` in LuckPerms; name them.
-- Wave 2, `storage-method: postgresql` and `mongodb`: `storage/postgres.rs` and `storage/mongo.rs` are written (LuckPerms' schema and document layout) behind the cargo feature `wave2`, off by default. They need the `postgres`, `mongodb` and `bson` crates that the branch fam-mod-deps-db-clients adds to `horizon-mod-deps`; until then the mod refuses to start with a message naming the method.
-- Wave 2, messaging: `rabbitmq` (`lapin`), `postgresql` (LISTEN/NOTIFY) and `pluginmsg` (plugin messages through an online player, branch fam-provider-bridges) are in `messenger_wave2.rs`, behind `wave2`. Without it each is refused at start with a message and messaging stays off. Neither has been compiled or run against a broker.
+- `storage-method: postgresql` and `mongodb`: `storage/postgres.rs` (`postgres` crate, no TLS) and `storage/mongo.rs` (`mongodb` 3 + `bson` 3, blocking API) use LuckPerms' schema and document layout. Not run against a live database.
+- Messaging: `rabbitmq` (`lapin` on tokio), `postgresql` (LISTEN/NOTIFY) and `pluginmsg` (channel `luckperms:update` via `register_plugin_channel`, hook `plugin_message`, `send_plugin_message` through an online player) are in `messenger_wave2.rs`. Not run against a broker.
 - Redis through a cluster talks to the first node only (pub/sub reaches every node of a cluster). The Redis, NATS, SQLite, file-storage and live-socket code is tested against stand-ins (a fake broker, an in-memory service, temp folders); none of it has run against a real broker or the real bytesocks service yet.
 - Split storage with a MariaDB/MySQL part carries the SQL messenger on that part. A file storage or SQLite cannot carry it (`sql` messaging is then refused with a message).
 - `storage-method: rest` talks to a LuckPerms REST API (`data.rest-url`, `data.rest-auth-key` as a Bearer key), as the original's `RestStorage`; bulk updates and `/lp search` other than `==` and `~~ foo%` are unsupported there, as in the original, and it carries no SQL messenger (use Redis or NATS). Tested against a local stand-in server, not a real API.

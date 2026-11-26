@@ -13,9 +13,7 @@ pub mod formats;
 mod rows;
 #[cfg(feature = "net")]
 pub mod rest;
-#[cfg(feature = "wave2")]
 pub mod mongo;
-#[cfg(feature = "wave2")]
 pub mod postgres;
 pub mod split;
 #[cfg(feature = "mysql")]

@@ -1,8 +1,7 @@
 //! The messaging services that need wave 2 engine or dependency work: `pluginmsg` (plugin messages over a player's
 //! connection to a relay on the proxy: branch fam-provider-bridges, `register_plugin_channel`, hook `plugin_message`,
 //! `PlayerRef::send_plugin_message`), `postgresql` (LISTEN/NOTIFY) and `rabbitmq` (AMQP 0-9-1), both from the
-//! clients fam-mod-deps-db-clients adds to `horizon-mod-deps`. The plugin-message buffers are plain code (tested);
-//! the other two are behind the cargo feature `wave2` and not compiled yet.
+//! clients fam-mod-deps-db-clients adds to `horizon-mod-deps`. The plugin-message buffers are plain code (tested).
 //!
 //! All three carry the same text as the other transports: the JSON of `messaging.rs`, here as `writeUTF` (a two byte
 //! big-endian length and the UTF-8 bytes) for pluginmsg and RabbitMQ, as plain text for NOTIFY.
@@ -73,10 +72,8 @@ impl Messenger for PluginMessenger {
     }
 }
 
-#[cfg(feature = "wave2")]
 pub use external::{open_postgres, open_rabbitmq};
 
-#[cfg(feature = "wave2")]
 mod external {
     use super::*;
     use crate::horizon_luckperms_core::config::Config;

@@ -1,7 +1,6 @@
 //! `storage-method: postgresql`: LuckPerms' PostgreSQL schema (`schema/postgresql.sql`) and statements, so this
-//! server shares tables with LuckPerms on Paper and Velocity. Wave 2: needs the `postgres` client crate that the
-//! branch fam-mod-deps-db-clients adds to `horizon-mod-deps` (blocking, no TLS), behind the cargo feature `wave2`.
-//! Not compiled yet: the crate is not in the SDK this mod builds against.
+//! server shares tables with LuckPerms on Paper and Velocity. Uses the blocking `postgres` client that
+//! `horizon-mod-deps` lists (no TLS).
 
 use super::rows::{node_columns, read_node};
 use super::{diff, HolderKey, KeyMatch, PlayerRow, PlayerSave, Result, Storage};
