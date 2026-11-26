@@ -627,6 +627,15 @@ pub fn meta_of(player: u128) -> (Option<String>, Option<String>, Vec<(String, Op
     )
 }
 
+/// A group write another mod asked for (`permission_group_write`): the player joins or leaves the group, as
+/// `/lp user <uuid> parent add|remove` does (Vault's `userAddGroup`/`userRemoveGroup`). False for a group that does not
+/// exist or while no service runs. The published groups follow on the next refresh of the tick.
+pub fn group_write(player: u128, group: &str, add: bool) -> bool {
+    let Some(rt) = runtime::get() else { return false };
+    let v = crate::horizon_luckperms_core::vault::Vault::new(&rt);
+    if add { v.user_add_group(None, player, group) } else { v.user_remove_group(None, player, group) }
+}
+
 /// `resolve-command-selectors` is on.
 pub fn resolve_selectors() -> bool {
     runtime::get().is_some_and(|rt| rt.config().resolve_command_selectors)

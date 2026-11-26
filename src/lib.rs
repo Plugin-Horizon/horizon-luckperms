@@ -516,6 +516,14 @@ impl Hooks for Mod {
         event.handlers.push(HANDLER_ID.to_owned());
     }
 
+    // The provider answers a group write another mod asked for (`permission_group_add`/`remove`).
+    fn permission_group_write(&self, _: &mut dyn ServerHost, event: &mut mod_api::PermissionGroupWriteEvent<'_>) -> Option<bool> {
+        if event.handler != HANDLER_ID {
+            return None;
+        }
+        Some(glue::group_write(event.uuid, event.group, event.add))
+    }
+
     fn permission_handler_query(
         &self,
         host: &mut dyn ServerHost,
