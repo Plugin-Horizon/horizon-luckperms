@@ -311,3 +311,13 @@ fn search_and_permission_set_complete_the_known_permission_tree() {
 fn sp(line: &str) -> Vec<String> {
     line.split(' ').map(str::to_owned).collect()
 }
+
+#[test]
+fn the_first_time_setup_prints_the_command_without_a_slash() {
+    // Paper (round 2): "> lp user PtNoop permission set luckperms.* true" - the label as typed, no leading slash.
+    let (rt, mut st) = setup();
+    let noop = CommandSender { uuid: ALICE, name: "PtNoop".into(), console: false };
+    let out = execute_labelled(&rt, &mut st, &noop, "lp", &split_args(""));
+    let out: Vec<String> = out.lines.iter().map(|l| crate::horizon_luckperms_core::text::plain(l)).collect();
+    assert!(out.iter().any(|l| l == "[LP]  > lp user PtNoop permission set luckperms.* true"), "{out:?}");
+}
