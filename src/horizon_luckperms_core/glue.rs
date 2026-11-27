@@ -4,8 +4,8 @@
 use crate::horizon_luckperms_core::command::ROOTS;
 use crate::horizon_luckperms_core::config::{Config, DEFAULT_TOML, FILE_NAME};
 use crate::horizon_luckperms_core::original::{self, Reads, CONFIG_YML, CONTEXTS_JSON};
-use crate::horizon_luckperms_core::runtime::{self, CommandSender, OnlinePlayer, Outgoing};
-use crate::horizon_luckperms_core::storage::{MemoryStorage, Storage};
+use crate::horizon_luckperms_core::runtime::{self, CommandSender, OnlinePlayer, Outgoing, Recipient};
+use crate::horizon_luckperms_core::storage::Storage;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::SystemTime;
@@ -56,7 +56,10 @@ fn load(src: &Source) -> Result<Config, String> {
     match src {
         Source::Toml { path } => {
             let text = std::fs::read_to_string(path).unwrap_or_default();
-            Config::parse(&text)
+            let mut cfg = Config::parse(&text)?;
+            // The file storages and the SQLite file live in `<config dir>/luckperms`, with the exports.
+            cfg.data_dir = path.parent().map(|p| p.join("luckperms")).unwrap_or_default();
+            Ok(cfg)
         }
         Source::Original { dir } => {
             let text = std::fs::read_to_string(dir.join(CONFIG_YML)).map_err(|e| format!("{CONFIG_YML} cannot be read: {}", e.kind()))?;
@@ -69,6 +72,7 @@ fn load(src: &Source) -> Result<Config, String> {
                 cfg.static_contexts = statics;
                 cfg.default_contexts = defaults;
             }
+            cfg.data_dir = dir.clone();
             Ok(cfg)
         }
     }
@@ -79,6 +83,7 @@ fn load(src: &Source) -> Result<Config, String> {
 /// empty password when missing; the service then starts only once the password is filled in.
 pub fn start(config_dir: &Path, level_name: &str) {
     crate::horizon_luckperms_core::command::backup::set_data_dir(config_dir);
+    crate::horizon_luckperms_core::translations::set_dir(config_dir);
     let src = if Path::new(ORIGINAL_DIR).join(CONFIG_YML).exists() {
         Source::Original { dir: PathBuf::from(ORIGINAL_DIR) }
     } else {
@@ -102,7 +107,8 @@ pub fn start(config_dir: &Path, level_name: &str) {
     for n in &cfg.unsupported {
         log(&format!("not supported, ignored: {n}"));
     }
-    let storage: Box<dyn Storage> = match open_storage(&cfg) {
+    crate::horizon_luckperms_core::translations::load(&std::env::var("LUCKPERMS_LOCALE").unwrap_or_else(|_| cfg.horizon.locale.clone()));
+    let storage: Box<dyn Storage> = match crate::horizon_luckperms_core::storage::factory::open(&cfg) {
         Ok(s) => s,
         Err(e) => {
             log(&format!("storage not opened: {e}; not started"));
@@ -113,32 +119,6 @@ pub fn start(config_dir: &Path, level_name: &str) {
     if let Err(e) = runtime::start(cfg, storage, level_name) {
         log(&format!("not started: {e}"));
     }
-}
-
-fn open_storage(cfg: &Config) -> Result<Box<dyn Storage>, String> {
-    match cfg.storage.method.to_lowercase().as_str() {
-        "memory" => {
-            log("WARNING: storage method memory keeps everything in RAM; all data is lost at restart");
-            Ok(Box::new(MemoryStorage::default()))
-        }
-        "mariadb" | "mysql" => {
-            if cfg.storage.password.is_empty() {
-                return Err("storage.password is empty (fill it in, or use method = \"memory\" for a lone test server)".into());
-            }
-            sql_storage(cfg)
-        }
-        other => Err(format!("storage method {other} is not supported (mariadb, mysql, memory)")),
-    }
-}
-
-#[cfg(feature = "mysql")]
-fn sql_storage(cfg: &Config) -> Result<Box<dyn Storage>, String> {
-    Ok(Box::new(crate::horizon_luckperms_core::storage::sql::SqlStorage::new(&cfg.storage)?))
-}
-
-#[cfg(not(feature = "mysql"))]
-fn sql_storage(_cfg: &Config) -> Result<Box<dyn Storage>, String> {
-    Err("built without the mysql feature".into())
 }
 
 pub fn stop() {
@@ -176,6 +156,10 @@ pub fn check_config() {
 pub struct TickOut {
     pub lines: Vec<Outgoing>,
     pub console_commands: Vec<String>,
+    /// `/lp verbose command` jobs: the host runs each command as its target.
+    pub verbose_jobs: Vec<runtime::VerboseJob>,
+    /// Commands a node grants above the player's operator level: the host runs each at the level it needs.
+    pub granted: Vec<runtime::GrantedJob>,
     /// Groups, users or tracks changed since the last tick: the players' command trees are
     /// sent again (`native_resend_commands`), so granted or revoked commands show at once.
     pub resend_trees: bool,
@@ -194,7 +178,12 @@ pub fn tick(players: Option<Vec<OnlinePlayer>>) -> TickOut {
     }
     static SEEN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let resend_trees = changed_since(&SEEN, rt.model_version());
-    TickOut { lines: rt.drain_outbox(), console_commands: rt.drain_console_commands(), resend_trees }
+    TickOut { lines: rt.drain_outbox(), console_commands: rt.drain_console_commands(), verbose_jobs: rt.drain_verbose_jobs(), granted: rt.drain_granted_jobs(), resend_trees }
+}
+
+/// `auto-op` is on: operator status follows `luckperms.autoop`.
+pub fn auto_op() -> bool {
+    runtime::get().is_some_and(|rt| rt.config().auto_op)
 }
 
 /// `native_permission_check`: LuckPerms' answer for a node, None when it has no opinion
@@ -244,8 +233,22 @@ pub enum DeclaredDefault {
 pub fn handler_answer_declared(player: u128, node: &str, online: bool, level: u8, declared: DeclaredDefault) -> Option<bool> {
     let rt = runtime::get()?;
     crate::horizon_luckperms_core::known::record(node);
-    let decision = rt.check(player, node).as_bool();
-    let answer = declared_answer(decision, online, rt.is_op(level), level, declared, rt.config().apply_bukkit_default_permissions);
+    let mut decision = rt.check(player, node).as_bool();
+    let is_op = rt.is_op(level);
+    // `apply-default-negated-permissions-before-wildcards`: a node whose declared default is false for this player
+    // is not lifted by a wildcard or regex.
+    if rt.config().apply_default_negated_before_wildcards
+        && decision == Some(true)
+        && matches!(rt.check_processor(player, node), "wildcard" | "regex")
+        && match declared {
+            DeclaredDefault::Nobody => true,
+            DeclaredDefault::Level(l) => l > 0 && !(is_op && level >= l),
+            DeclaredDefault::Everyone => false,
+        }
+    {
+        decision = Some(false);
+    }
+    let answer = declared_answer(decision, online, is_op, level, declared, rt.config().apply_bukkit_default_permissions);
     crate::horizon_luckperms_core::verbose::record(&rt, player, rt.online_player(player).map(|p| p.name), node, decision);
     answer
 }
@@ -321,6 +324,23 @@ pub fn login_wait_ms() -> u64 {
     runtime::get().map_or(0, |rt| rt.config().horizon.login_wait_ms)
 }
 
+/// A `discordsrv:contexts` reply: one `key=value` per line; lines without both parts are skipped.
+pub fn parse_contexts(reply: &str) -> Vec<(String, String)> {
+    reply
+        .lines()
+        .filter_map(|l| l.split_once('='))
+        .filter(|(k, v)| !k.trim().is_empty() && !v.trim().is_empty())
+        .map(|(k, v)| (k.trim().to_owned(), v.trim().to_owned()))
+        .collect()
+}
+
+/// The contexts another mod gave for a player.
+pub fn external_contexts(uuid: u128, pairs: Vec<(String, String)>) {
+    if let Some(rt) = runtime::get() {
+        rt.set_external_contexts(uuid, pairs);
+    }
+}
+
 pub fn players(players: Vec<OnlinePlayer>) {
     if let Some(rt) = runtime::get() {
         rt.update_players(players);
@@ -355,7 +375,7 @@ pub fn lp_command(sender: Option<(u128, &str)>, command: &str) -> bool {
         Some((uuid, name)) => CommandSender { uuid, name: name.to_owned(), console: false },
         None => CommandSender::console(),
     };
-    rt.submit_command(s, rest);
+    rt.submit_command_labelled(s, &root, rest);
     true
 }
 
@@ -417,6 +437,17 @@ pub fn complete(player: u128, name: &str, command: &str) -> Option<(usize, Vec<S
     let last_start = offset + root.len() + 1 + rest.rfind(' ').map(|i| i + 1).unwrap_or(0);
     let sender = CommandSender { uuid: player, name: name.to_owned(), console: false };
     Some((last_start, rt.complete(&sender, &args)))
+}
+
+/// Completions for the argument being typed of `/lp`: `args` are the words after the root, the last one partial
+/// (a player's name and uuid, or `None` for the console).
+pub fn complete_words(player: Option<(u128, &str)>, args: &[String]) -> Vec<String> {
+    let Some(rt) = runtime::get() else { return Vec::new() };
+    let sender = match player {
+        Some((uuid, name)) => CommandSender { uuid, name: name.to_owned(), console: false },
+        None => CommandSender::console(),
+    };
+    rt.complete(&sender, args)
 }
 
 #[cfg(test)]
@@ -523,6 +554,13 @@ mod declared_default_tests {
     }
 
     #[test]
+    fn contexts_reply_parses_key_value_lines() {
+        let got = parse_contexts("discordsrv:linked=true\nbad line\ndiscordsrv:role=Staff Team\n=x\nk=\n");
+        assert_eq!(got, vec![("discordsrv:linked".to_owned(), "true".to_owned()), ("discordsrv:role".to_owned(), "Staff Team".to_owned())]);
+        assert!(parse_contexts("").is_empty());
+    }
+
+    #[test]
     fn without_a_decision_the_declared_default_decides() {
         assert_eq!(declared_answer(None, true, false, 0, DeclaredDefault::Everyone, true), Some(true));
         assert_eq!(declared_answer(None, true, true, 4, DeclaredDefault::Nobody, true), Some(false));
@@ -542,4 +580,104 @@ mod declared_default_tests {
         assert_eq!(declared_answer(None, true, false, 0, DeclaredDefault::Everyone, false), Some(false));
         assert_eq!(declared_answer(None, true, true, 4, DeclaredDefault::Nobody, false), Some(true));
     }
+}
+
+/// Called by the host after it ran a `/lp verbose command` job: stops the sender's listener and says how it went
+/// (`VerboseCommand`: complete, or no checks made).
+pub fn verbose_job_done(job: &runtime::VerboseJob) {
+    let Some(rt) = runtime::get() else { return };
+    let matched = crate::horizon_luckperms_core::verbose::unregister(job.sender.uuid).map_or(0, |f| f.matched);
+    let to = if job.sender.console { Recipient::Console } else { Recipient::Player(job.sender.uuid) };
+    let lines = crate::horizon_luckperms_core::command::verbose_done_lines(matched);
+    for l in lines {
+        rt.push_out(to.clone(), l);
+    }
+}
+
+/// Registers the accept-all listener for a job, before its command runs.
+pub fn verbose_job_start(job: &runtime::VerboseJob) {
+    if let Ok(ast) = crate::horizon_luckperms_core::verbose::compile("") {
+        let to = if job.sender.console { Recipient::Console } else { Recipient::Player(job.sender.uuid) };
+        crate::horizon_luckperms_core::verbose::register(to, job.sender.uuid, &job.sender.name, job.sender.console, ast, "", true);
+    }
+}
+
+/// A typed command whose node is true but whose vanilla level the player lacks: queued to run at the level it needs
+/// (the player's own feedback, no operator status). True when queued (the original line must then be cancelled).
+pub fn queue_granted(player: u128, command: &str, level: u8) -> bool {
+    let Some(rt) = runtime::get() else { return false };
+    let needed = command_level(player, command, level);
+    if needed <= level {
+        return false;
+    }
+    rt.queue_granted_job(runtime::GrantedJob { player, line: command.trim_start_matches('/').to_owned(), level: needed });
+    true
+}
+
+/// The player's primary group, for the engine's `permission_groups`.
+pub fn primary_group(player: u128) -> Option<String> {
+    crate::horizon_luckperms_core::api::primary_group(player)
+}
+
+/// Every group the player inherits here, primary first when known.
+pub fn groups(player: u128) -> Vec<String> {
+    let mut all = crate::horizon_luckperms_core::api::groups(player);
+    if let Some(p) = primary_group(player) {
+        all.retain(|g| *g != p);
+        all.insert(0, p);
+    }
+    all
+}
+
+/// The prefix and suffix of the player and of each of their groups, for `permission_groups`.
+pub fn meta_of(player: u128) -> (Option<String>, Option<String>, Vec<(String, Option<String>, Option<String>)>) {
+    (
+        crate::horizon_luckperms_core::api::prefix(player).filter(|p| !p.is_empty()),
+        crate::horizon_luckperms_core::api::suffix(player).filter(|p| !p.is_empty()),
+        crate::horizon_luckperms_core::api::group_meta(player),
+    )
+}
+
+/// A group write another mod asked for (`permission_group_write`): the player joins or leaves the group, as
+/// `/lp user <uuid> parent add|remove` does (Vault's `userAddGroup`/`userRemoveGroup`). False for a group that does not
+/// exist or while no service runs. The published groups follow on the next refresh of the tick.
+pub fn group_write(player: u128, group: &str, add: bool) -> bool {
+    let Some(rt) = runtime::get() else { return false };
+    let v = crate::horizon_luckperms_core::vault::Vault::new(&rt);
+    if add { v.user_add_group(None, player, group) } else { v.user_remove_group(None, player, group) }
+}
+
+/// `resolve-command-selectors` is on.
+pub fn resolve_selectors() -> bool {
+    runtime::get().is_some_and(|rt| rt.config().resolve_command_selectors)
+}
+
+/// The placeholder service (`luckperms:placeholder`): payload `<uuid as 32 hex digits> <params>`, reply the value.
+/// Params: `prefix`, `suffix`, `primary_group_name`, `weight`, `groups`, `meta_<key>`, `in_group_<name>`,
+/// `has_permission_<node>`, `check_permission_<node>` (the `%luckperms_*%` names).
+pub fn placeholder(payload: &str) -> Option<String> {
+    use crate::horizon_luckperms_core::api;
+    let (id, params) = payload.split_once(' ')?;
+    let uuid = u128::from_str_radix(id.trim(), 16).ok()?;
+    let p = params.trim();
+    Some(match p {
+        "prefix" => api::prefix(uuid).unwrap_or_default(),
+        "suffix" => api::suffix(uuid).unwrap_or_default(),
+        "primary_group_name" => api::primary_group(uuid).unwrap_or_default(),
+        "weight" => api::weight(uuid).map(|w| w.to_string()).unwrap_or_default(),
+        "groups" => groups(uuid).join(", "),
+        _ => {
+            if let Some(k) = p.strip_prefix("meta_") {
+                api::meta_value(uuid, k).unwrap_or_default()
+            } else if let Some(g) = p.strip_prefix("in_group_") {
+                api::in_group(uuid, g).to_string()
+            } else if let Some(n) = p.strip_prefix("has_permission_") {
+                (permission(uuid, n) == Some(true)).to_string()
+            } else if let Some(n) = p.strip_prefix("check_permission_") {
+                permission(uuid, n).map(|b| b.to_string()).unwrap_or_default()
+            } else {
+                return None;
+            }
+        }
+    })
 }

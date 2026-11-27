@@ -3,9 +3,9 @@
 //! `TrackEditor`, `ApplyEditsCommand`, `WebEditorRequest`, `WebEditorSession` and
 //! `WebEditorResponse`.
 //!
-//! Not ported: the live bytesocks connection. The editor then shows the `/lp applyedits <code>`
-//! command to copy, which is what LuckPerms does when its socket is unreachable
-//! (`/lp trusteditor` has no socket to trust and answers as LuckPerms does then).
+//! The live connection (`/lp trusteditor`, the editor sending its changes itself) is in `editorlive.rs` and
+//! `editorsocket.rs`. When the bytesocks service cannot be reached the editor shows the `/lp applyedits <code>`
+//! command to copy, as LuckPerms does, and `/lp trusteditor` answers that there is no socket to trust.
 //!
 //! **Privacy.** The payload is built from typed fields only (names, UUIDs, nodes, tracks,
 //! contexts, the uploader's name and UUID). No IP address and no other personal data is read
@@ -15,7 +15,7 @@
 
 use super::args::Args;
 use super::fmt::{self, aq, dred};
-use super::{Ctx, Holder, Loaded, LABEL};
+use super::{Ctx, Holder, Loaded};
 use crate::horizon_luckperms_core::actionlog::{Part, TargetType};
 use crate::horizon_luckperms_core::bytebin::{self, HttpError};
 use crate::horizon_luckperms_core::calc;
@@ -172,9 +172,9 @@ pub(crate) fn personal_data_in(text: &str) -> bool {
 
 // ---- sessions ------------------------------------------------------------------------------
 
-struct Session {
+pub(super) struct Session {
     request: Request,
-    completed: bool,
+    pub(super) completed: bool,
     at: Instant,
 }
 
@@ -183,7 +183,7 @@ fn sessions() -> &'static Mutex<HashMap<String, Session>> {
     S.get_or_init(Default::default)
 }
 
-fn lock_sessions() -> std::sync::MutexGuard<'static, HashMap<String, Session>> {
+pub(super) fn lock_sessions() -> std::sync::MutexGuard<'static, HashMap<String, Session>> {
     sessions().lock().unwrap_or_else(|e| e.into_inner())
 }
 
@@ -230,11 +230,11 @@ impl Type {
     }
 }
 
-fn group_holder(g: &Group) -> EditorHolder {
+pub(super) fn group_holder(g: &Group) -> EditorHolder {
     EditorHolder { key: HolderKey::Group(g.name.clone()), display: g.display_name().unwrap_or_else(|| g.name.clone()), nodes: g.data.nodes.clone() }
 }
 
-fn user_holder(u: &User) -> EditorHolder {
+pub(super) fn user_holder(u: &User) -> EditorHolder {
     EditorHolder { key: HolderKey::User(u.uuid), display: u.display(), nodes: u.data.nodes.clone() }
 }
 
@@ -294,9 +294,9 @@ fn matching_users(c: &mut Ctx<'_>, matchers: &[KeyMatch], include_offline: bool)
     users
 }
 
-/// `WebEditorSession.open` without the socket: build, check, upload, remember, print the link.
-fn open_session(c: &mut Ctx<'_>, holders: Vec<EditorHolder>, tracks: Vec<Track>) {
-    c.msg(tr(lang::T_COMMAND_EDITOR_START, '7', &[]));
+/// `WebEditorRequest.generate`: the request for the editor, or None when it holds something that looks like an
+/// IP address (those are never uploaded; the player is told).
+pub(super) fn prepare(c: &mut Ctx<'_>, holders: &[EditorHolder], tracks: &[Track]) -> Option<Value> {
     let mut potential = c.rt.static_contexts();
     for p in c.rt.online_players() {
         potential.add_all(&c.rt.contexts_of(&p));
@@ -306,33 +306,91 @@ fn open_session(c: &mut Ctx<'_>, holders: Vec<EditorHolder>, tracks: Vec<Track>)
         uploader = format!("{}@{}", uploader, c.cfg.server);
     }
     let now_ms = crate::horizon_luckperms_core::duration::now() * 1000;
-    let payload = build_payload(&holders, &tracks, &uploader, c.sender.uuid, LABEL, &potential, now_ms, &crate::horizon_luckperms_core::known::all(&c.cfg));
-    let json = payload.to_string();
-    if personal_data_in(&json) {
+    let payload = build_payload(holders, tracks, &uploader, c.sender.uuid, &super::label(), &potential, now_ms, &crate::horizon_luckperms_core::known::all(&c.cfg));
+    if personal_data_in(&payload.to_string()) {
         c.msg("\u{a7}cThe editor session was not opened: the data contains something that looks like an IP address, and those are never uploaded. Remove it from the permissions first.");
-        return;
+        return None;
     }
+    Some(payload)
+}
+
+/// `WebEditorSession.uploadRequestData`: uploads the request (with the socket's detail when there is one), remembers
+/// the session, returns its key. A failure is told to the player.
+pub(super) fn post(c: &mut Ctx<'_>, mut payload: Value, holders: &[EditorHolder], socket_detail: Option<Value>) -> Option<String> {
+    if let Some(d) = socket_detail {
+        payload["socket"] = d;
+    }
+    let json = payload.to_string();
     #[cfg(feature = "net")]
     let body = bytebin::gzip(json.as_bytes());
     #[cfg(not(feature = "net"))]
     let body: Vec<u8> = json.into_bytes();
     if body.len() > bytebin::MAX_UPLOAD {
         c.msg("\u{a7}cThe editor session was not opened: the data is too big. Narrow it with a type or a filter.");
-        return;
+        return None;
     }
-    let cfg = c.cfg.clone();
-    match bytebin::with_client(&cfg.bytebin_url, |b| b.post(&body)) {
+    let url = c.cfg.bytebin_url.clone();
+    match bytebin::with_client(&url, |b| b.post(&body)) {
         Ok(id) => {
-            add_session(&id, request_of(&holders));
-            let url = format!("{}{}", cfg.web_editor_url, id);
+            add_session(&id, request_of(holders));
+            Some(id)
+        }
+        Err(e) => {
+            http_failure(c, e);
+            None
+        }
+    }
+}
+
+/// `WebEditorSession.createSocket`: the generation of the socket and the `socket` detail of the request.
+#[cfg(feature = "wire")]
+fn open_socket(c: &mut Ctx<'_>, holders: &[EditorHolder], tracks: &[Track]) -> Option<(u64, Value)> {
+    super::editorlive::open(c, holders, tracks)
+}
+
+#[cfg(not(feature = "wire"))]
+fn open_socket(_c: &mut Ctx<'_>, _holders: &[EditorHolder], _tracks: &[Track]) -> Option<(u64, Value)> {
+    None
+}
+
+/// The link was shown: the socket's clock starts. Or it was not: the socket goes.
+#[cfg(feature = "wire")]
+fn finish_socket(c: &Ctx<'_>, generation: u64, shown: bool) {
+    use crate::horizon_luckperms_core::editorsocket as sock;
+    if shown {
+        sock::arm(c.sender.uuid, generation);
+    } else {
+        sock::discard(c.sender.uuid, generation);
+    }
+}
+
+#[cfg(not(feature = "wire"))]
+fn finish_socket(_c: &Ctx<'_>, _generation: u64, _shown: bool) {}
+
+/// `WebEditorSession.open`: build, check, open the socket, upload, remember, print the link.
+fn open_session(c: &mut Ctx<'_>, holders: Vec<EditorHolder>, tracks: Vec<Track>) {
+    c.msg(tr(lang::T_COMMAND_EDITOR_START, '7', &[]));
+    let Some(payload) = prepare(c, &holders, &tracks) else { return };
+    let socket = open_socket(c, &holders, &tracks);
+    let generation = socket.as_ref().map(|(g, _)| *g);
+    match post(c, payload, &holders, socket.map(|(_, d)| d)) {
+        Some(id) => {
+            let url = format!("{}{}", c.cfg.web_editor_url, id);
             c.msg(format!("{}:", tr(lang::T_COMMAND_EDITOR_URL, 'a', &[])));
             c.raw(crate::horizon_luckperms_core::text::rich(
                 &format!("\u{a7}b{url}"),
                 Some(crate::horizon_luckperms_core::text::Click::OpenUrl(url.clone())),
                 Some(&format!("\u{a7}7{}", tr(lang::T_COMMAND_EDITOR_URL, '7', &[]))),
             ));
+            if let Some(g) = generation {
+                finish_socket(c, g, true);
+            }
         }
-        Err(e) => http_failure(c, e),
+        None => {
+            if let Some(g) = generation {
+                finish_socket(c, g, false);
+            }
+        }
     }
 }
 
@@ -414,14 +472,24 @@ pub(crate) fn track_editor(c: &mut Ctx<'_>, t: &Track) {
     open_session(c, holders, vec![t.clone()]);
 }
 
-/// `/lp trusteditor <id>`: trusting needs the live socket, which this port does not open.
+/// `/lp trusteditor <id>`: trusts the editor that said hello with this nonce on the sender's live socket.
 pub(crate) fn trust_editor(c: &mut Ctx<'_>, a: Args) {
     let id = a.get(0);
     if id.is_empty() {
         c.msg(format!("\u{a7}c{}. \u{a7}7({id})", lang::T_COMMAND_MISC_INVALID_CODE));
         return;
     }
-    c.msg(format!("{}.", tr(lang::T_COMMAND_EDITOR_SOCKET_TRUST_FAILURE, 'c', &[])));
+    #[cfg(feature = "wire")]
+    let trusted = super::editorlive::trust(c, &id);
+    #[cfg(not(feature = "wire"))]
+    let trusted = false;
+    if trusted {
+        c.msg(format!("{}.", tr(lang::T_COMMAND_EDITOR_SOCKET_TRUST_SUCCESS, 'a', &[])));
+        c.msg(format!("{}.", tr(lang::T_COMMAND_EDITOR_SOCKET_TRUST_FUTUREINFO, '7', &[])));
+        c.msg(tr(lang::T_COMMAND_EDITOR_SOCKET_TRUST_CONNECTING, '7', &[]));
+    } else {
+        c.msg(format!("{}.", tr(lang::T_COMMAND_EDITOR_SOCKET_TRUST_FAILURE, 'c', &[])));
+    }
 }
 
 // ---- applying a reply ------------------------------------------------------------------------
@@ -451,7 +519,7 @@ pub(crate) fn apply_edits(c: &mut Ctx<'_>, mut a: Args) {
         Ok(v @ Value::Object(_)) => v,
         _ => return unable_to_read(c, &code),
     };
-    apply_response(c, &code, &data, LABEL, force);
+    apply_response(c, &code, &data, &super::label(), force);
 }
 
 fn unable_to_read(c: &mut Ctx<'_>, code: &str) {
@@ -1300,5 +1368,192 @@ mod tests {
         let (rt, mut st, _fake) = setup();
         let out = run(&rt, &mut st, "trusteditor abc");
         assert!(out[0].contains("Unable to trust the given session because the socket is closed"), "{out:?}");
+    }
+
+    // ---- the live socket, end to end (the service and the browser are simulated) ----
+
+    #[cfg(feature = "wire")]
+    mod live {
+        use super::*;
+        use crate::horizon_luckperms_core::command::{socket_frame, CmdOutput};
+        use crate::horizon_luckperms_core::editorsocket::{self as sock, Bytesocks, Channel, FrameSink, Keys, Outbound, SocketError};
+        use std::sync::mpsc;
+
+        /// Hands out channels and keeps what the server sends on them.
+        #[derive(Default)]
+        struct Svc {
+            made: RefCell<Vec<(u64, mpsc::Receiver<Outbound>)>>,
+        }
+
+        impl Bytesocks for Svc {
+            fn create(&self, _owner: u128, generation: u64, _sink: FrameSink) -> Result<Channel, SocketError> {
+                let (tx, rx) = mpsc::channel();
+                self.made.borrow_mut().push((generation, rx));
+                Ok(Channel { id: "chanx".into(), tx })
+            }
+        }
+
+        struct Browser {
+            keys: Keys,
+        }
+
+        impl Browser {
+            fn new() -> Browser {
+                Browser { keys: Keys::generate().unwrap() }
+            }
+            fn frame(&self, v: Value) -> String {
+                let inner = v.to_string();
+                json!({"msg": inner, "signature": self.keys.sign(&inner).unwrap()}).to_string()
+            }
+            fn hello(&self, nonce: &str, session: &str) -> String {
+                self.frame(json!({"type": "hello", "nonce": nonce, "sessionId": session, "browser": "Firefox on Linux", "publicKey": self.keys.public_base64()}))
+            }
+        }
+
+        /// What the server put on a channel, as messages.
+        fn sent(svc: &Svc, i: usize) -> Vec<Value> {
+            svc.made.borrow()[i]
+                .1
+                .try_iter()
+                .filter_map(|o| if let Outbound::Text(t) = o { Some(t) } else { None })
+                .map(|t| serde_json::from_str::<Value>(&serde_json::from_str::<Value>(&t).unwrap()["msg"].as_str().unwrap().to_owned()).unwrap())
+                .collect()
+        }
+
+        fn run_as(rt: &Runtime, st: &mut MemoryStorage, who: &CommandSender, line: &str) -> Vec<String> {
+            let out = execute(rt, st, who, &split_args(line));
+            for a in &out.actions {
+                st.log_action(a).unwrap();
+            }
+            out.lines.iter().map(|l| plain(l)).collect()
+        }
+
+        fn lines(out: &CmdOutput) -> Vec<String> {
+            out.lines.iter().map(|l| plain(l)).collect()
+        }
+
+        #[test]
+        fn a_player_opens_the_editor_trusts_it_and_it_sends_its_changes() {
+            let (rt, mut st, fake) = setup();
+            let player: u128 = 0xfeed_0000_0000_0000_0000_0000_0000_0001;
+            rt.update_players(vec![OnlinePlayer { uuid: player, name: "Pat".into(), op_level: 4, dimension: "minecraft:overworld".into(), game_mode: 0 }]);
+            rt.model.write().unwrap().users.insert(player, User::new(player));
+            let me = CommandSender { uuid: player, name: "Pat".into(), console: false };
+            let svc = Rc::new(Svc::default());
+            sock::set_test_bytesocks(Some(svc.clone()));
+            run(&rt, &mut st, "creategroup mod 50");
+
+            // /lp editor: the request names the channel and this server's key.
+            let out = run_as(&rt, &mut st, &me, "editor groups");
+            assert!(out.iter().any(|l| l.contains("luckperms.net/editor/")), "{out:?}");
+            let posted = posted_json(&fake, 0);
+            assert_eq!(posted["socket"]["protocolVersion"], 2);
+            assert_eq!(posted["socket"]["channelId"], "chanx");
+            assert!(sock::parse_public_key(posted["socket"]["publicKey"].as_str().unwrap()).is_ok());
+            let generation = svc.made.borrow()[0].0;
+            let session = format!("{}x1", fake.prefix);
+
+            // The browser says hello: not trusted yet, the player is told how to trust it.
+            let browser = Browser::new();
+            let (who, out) = socket_frame(&rt, &mut st, player, generation, &browser.hello("n-1", &session)).unwrap();
+            assert_eq!(who.uuid, player);
+            let said = lines(&out);
+            assert!(said.iter().any(|l| l.contains("An editor window has connected, but it is not yet trusted")), "{said:?}");
+            assert!(said.iter().any(|l| l.contains("session id = n-1, browser = Firefox on Linux")), "{said:?}");
+            assert!(said.iter().any(|l| l.contains("If it was you, click here to trust the session!")), "{said:?}");
+            assert_eq!(sent(&svc, 0)[0], json!({"type": "hello-reply", "nonce": "n-1", "state": "untrusted"}));
+            // Its other messages are ignored until then.
+            let (_, out) = socket_frame(&rt, &mut st, player, generation, &browser.frame(json!({"type": "ping"}))).unwrap();
+            assert!(out.lines.is_empty());
+            assert!(sent(&svc, 0).is_empty());
+
+            // /lp trusteditor: the key is remembered on the player and the browser is told.
+            assert!(run_as(&rt, &mut st, &me, "trusteditor nope")[0].contains("Unable to trust"));
+            let out = run_as(&rt, &mut st, &me, "trusteditor n-1");
+            assert!(out[0].contains("The editor session has been marked as trusted"), "{out:?}");
+            assert!(out[1].contains("In the future, connections from the same browser will be trusted automatically"), "{out:?}");
+            assert_eq!(sent(&svc, 0)[0], json!({"type": "hello-reply", "nonce": "n-1", "state": "trusted"}));
+            let hash = sock::key_hash(&sock::parse_public_key(&browser.keys.public_base64()).unwrap());
+            assert!(rt.model.read().unwrap().users[&player].data.nodes.iter().any(|n| matches!(&n.kind, Kind::Meta(k, v) if k == "lp-editor-key" && *v == hash)));
+            assert!(st.load_user(player).unwrap().0.iter().any(|n| n.key.starts_with("meta.lp-editor-key.")), "saved");
+            let (_, out) = socket_frame(&rt, &mut st, player, generation, &browser.frame(json!({"type": "connected"}))).unwrap();
+            assert!(lines(&out)[0].contains("Editor window connected successfully"));
+
+            // The editor sends its changes: applied here, and the next session comes back.
+            reply(&fake, "reply1", json!({"sessionId": session, "changes": [{"type": "group", "id": "mod", "nodes": [{"type": "permission", "key": "from.socket", "value": true}]}]}));
+            let (_, out) = socket_frame(&rt, &mut st, player, generation, &browser.frame(json!({"type": "change-request", "code": "reply1"}))).unwrap();
+            let said = lines(&out);
+            assert!(said.iter().any(|l| l.contains("Changes have been received from the connected web editor session")), "{said:?}");
+            assert!(said.iter().any(|l| l.contains("Web editor data was applied to group mod successfully.")), "{said:?}");
+            let next = format!("{}x2", fake.prefix);
+            assert_eq!(sent(&svc, 0), vec![json!({"type": "change-response", "state": "accepted"}), json!({"type": "change-response", "state": "applied", "newSessionCode": next})]);
+            assert!(rt.model.read().unwrap().groups["mod"].data.nodes.iter().any(|n| n.key == "from.socket"));
+            let follow = posted_json(&fake, 1);
+            assert!(follow.get("socket").is_none(), "a follow-up session has no socket of its own");
+            let groups: Vec<&str> = follow["permissionHolders"].as_array().unwrap().iter().filter_map(|h| h["id"].as_str()).collect();
+            assert!(groups.contains(&"mod") && groups.contains(&"default"), "{groups:?}");
+            // The applied session is done: a browser cannot reconnect to it.
+            let (_, _) = socket_frame(&rt, &mut st, player, generation, &browser.hello("n-2", &session)).unwrap();
+            assert_eq!(sent(&svc, 0)[0]["state"], "invalid");
+
+            // The key is remembered: the next /lp editor connects without asking again.
+            run_as(&rt, &mut st, &me, "editor groups");
+            let generation2 = svc.made.borrow()[1].0;
+            assert_ne!(generation, generation2);
+            assert!(socket_frame(&rt, &mut st, player, generation, &browser.frame(json!({"type": "ping"}))).is_none(), "the old socket is gone");
+            let session2 = format!("{}x3", fake.prefix);
+            let (_, out) = socket_frame(&rt, &mut st, player, generation2, &browser.hello("n-3", &session2)).unwrap();
+            assert!(lines(&out)[0].contains("Editor window connected successfully"));
+            assert_eq!(sent(&svc, 1)[0]["state"], "accepted");
+
+            sock::discard(player, generation2);
+            sock::set_test_bytesocks(None);
+        }
+
+        #[test]
+        fn the_console_is_asked_to_run_the_command_and_a_failed_upload_drops_the_socket() {
+            let (rt, mut st, fake) = setup();
+            // A console sender with an id of its own: sockets are kept per sender, and tests run side by side.
+            let console = CommandSender { uuid: 0xfeed_0000_0000_0000_0000_0000_0000_0002, name: "Console".into(), console: true };
+            let svc = Rc::new(Svc::default());
+            sock::set_test_bytesocks(Some(svc.clone()));
+            // The upload fails: no link, and the channel is closed.
+            *fake.fail.borrow_mut() = Some(HttpError::Status(503, "Service Unavailable".into()));
+            let out = run_as(&rt, &mut st, &console, "editor");
+            assert!(out.iter().any(|l| l.contains("Unable to communicate with the editor")), "{out:?}");
+            let frames: Vec<Outbound> = svc.made.borrow()[0].1.try_iter().collect();
+            assert_eq!(frames.last(), Some(&Outbound::Close), "the socket of a session nobody can open is closed");
+            let generation0 = svc.made.borrow()[0].0;
+            assert!(sock::take(console.uuid, Some(generation0)).is_none());
+
+            run_as(&rt, &mut st, &console, "editor");
+            let generation = svc.made.borrow()[1].0;
+            let browser = Browser::new();
+            let session = format!("{}x1", fake.prefix);
+            let (_, out) = socket_frame(&rt, &mut st, console.uuid, generation, &browser.hello("c-1", &session)).unwrap();
+            let said = lines(&out);
+            assert!(said.iter().any(|l| l.contains("If it was you, run /lp trusteditor c-1 to trust the session!")), "{said:?}");
+            // A change request from a browser nobody trusted is not applied.
+            let (_, out) = socket_frame(&rt, &mut st, console.uuid, generation, &browser.frame(json!({"type": "change-request", "code": "x"}))).unwrap();
+            assert!(out.lines.is_empty());
+            sock::discard(console.uuid, generation);
+            sock::set_test_bytesocks(None);
+        }
+
+        #[test]
+        fn an_ip_address_in_the_data_opens_no_socket() {
+            let (rt, mut st, fake) = setup();
+            let svc = Rc::new(Svc::default());
+            sock::set_test_bytesocks(Some(svc.clone()));
+            run(&rt, &mut st, "creategroup leaky");
+            run(&rt, &mut st, "group leaky permission set 10.0.0.1 true");
+            let me = CommandSender { uuid: 0xfeed_0000_0000_0000_0000_0000_0000_0003, name: "Q".into(), console: false };
+            rt.update_players(vec![OnlinePlayer { uuid: me.uuid, name: "Q".into(), op_level: 4, dimension: "minecraft:overworld".into(), game_mode: 0 }]);
+            let out = run_as(&rt, &mut st, &me, "editor groups");
+            assert!(out.iter().any(|l| l.contains("looks like an IP address")), "{out:?}");
+            assert!(svc.made.borrow().is_empty());
+            assert!(fake.posted.borrow().is_empty());
+            sock::set_test_bytesocks(None);
+        }
     }
 }

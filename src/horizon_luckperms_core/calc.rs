@@ -497,6 +497,31 @@ fn stack(model: &Model, fmt: &StackFormat, origin: &HolderRef, candidates: &[(i3
     Some(format!("{}{}{}", fmt.start_spacer, picked.join(&fmt.middle_spacer), fmt.end_spacer))
 }
 
+/// `meta-value-selection`: puts the value that counts first. `inheritance` keeps the order; `highest-number` and
+/// `lowest-number` take the extreme of the values that parse as numbers (no number: the order stays).
+pub fn select_meta_value(cfg: &Config, key: &str, values: &mut Vec<String>) {
+    let strategy = cfg.meta_value_selection.get(&key.to_lowercase()).unwrap_or(&cfg.meta_value_selection_default);
+    let highest = match strategy.as_str() {
+        "highest-number" => true,
+        "lowest-number" => false,
+        _ => return,
+    };
+    let mut best: Option<(usize, f64)> = None;
+    for (i, v) in values.iter().enumerate() {
+        let Ok(n) = v.trim().parse::<f64>() else { continue };
+        if n.is_nan() {
+            continue;
+        }
+        if best.is_none_or(|(_, b)| if highest { n > b } else { n < b }) {
+            best = Some((i, n));
+        }
+    }
+    if let Some((i, _)) = best {
+        let v = values.remove(i);
+        values.insert(0, v);
+    }
+}
+
 fn accumulate_meta(model: &Model, cfg: &Config, origin: &HolderRef, order: &[HolderRef], contexts: &ContextSet, now: i64) -> MetaData {
     let flags = cfg.global_flags();
     let mut seen = HashSet::new();
@@ -542,6 +567,9 @@ fn accumulate_meta(model: &Model, cfg: &Config, origin: &HolderRef, order: &[Hol
     }
     prefixes.sort_by(|a, b| b.0.cmp(&a.0));
     suffixes.sort_by(|a, b| b.0.cmp(&a.0));
+    for (key, values) in meta.iter_mut() {
+        select_meta_value(cfg, key, values);
+    }
     let primary_group = if let HolderRef::User(u) = origin { Some(primary_group(model, cfg, *u, contexts, now)) } else { None };
     if let Some(w) = weight {
         if !meta.iter().any(|(k, _)| k == "weight") {

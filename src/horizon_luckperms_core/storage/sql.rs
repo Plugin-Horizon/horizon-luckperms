@@ -1,10 +1,10 @@
 //! LuckPerms' MariaDB/MySQL schema (`schema/mariadb.sql`) and statements (`SqlStorage`), so
 //! this server reads and writes the same tables as LuckPerms on Paper and Velocity.
 
+use super::rows::{node_columns, read_node};
 use super::{diff, HolderKey, KeyMatch, PlayerRow, PlayerSave, Result, Storage};
 use crate::horizon_luckperms_core::actionlog::{Action, TargetType};
 use crate::horizon_luckperms_core::config;
-use crate::horizon_luckperms_core::context::{ContextSet, SERVER, WORLD};
 use crate::horizon_luckperms_core::model::{Group, Track, User, DEFAULT_GROUP};
 use crate::horizon_luckperms_core::node::Node;
 use mysql::prelude::*;
@@ -83,43 +83,6 @@ const SCHEMA: &[&str] = &[
     "CREATE TABLE `{prefix}actions` (`id` INT AUTO_INCREMENT NOT NULL, `time` BIGINT NOT NULL, `actor_uuid` VARCHAR(36) NOT NULL, `actor_name` VARCHAR(100) NOT NULL, `type` CHAR(1) NOT NULL, `acted_uuid` VARCHAR(36) NOT NULL, `acted_name` VARCHAR(36) NOT NULL, `action` VARCHAR(300) NOT NULL, PRIMARY KEY (`id`)) DEFAULT CHARSET = utf8mb4",
     "CREATE TABLE `{prefix}tracks` (`name` VARCHAR(36) NOT NULL, `groups` TEXT NOT NULL, PRIMARY KEY (`name`)) DEFAULT CHARSET = utf8mb4",
 ];
-
-/// `SqlStorage.readNode`: server and world columns become contexts (`global` is none).
-fn read_node(id: i64, permission: String, value: bool, server: String, world: String, expiry: i64, contexts: String) -> Option<Node> {
-    if permission.is_empty() {
-        return None;
-    }
-    let mut set = ContextSet::new();
-    set.add(SERVER, if server.is_empty() { "global" } else { &server });
-    set.add(WORLD, if world.is_empty() { "global" } else { &world });
-    set.add_all(&ContextSet::from_json(&contexts));
-    Some(Node::from_row(permission, value, expiry, set, id))
-}
-
-/// `SqlStorage.writeNode`'s columns: (permission, value, server, world, expiry, contexts). The
-/// first server and world value (sorted) go into their columns, the rest into the JSON.
-fn node_columns(n: &Node) -> (String, bool, String, String, i64, String) {
-    let mut rest = n.contexts.clone();
-    let server = n.contexts.values(SERVER).first().map(|s| s.to_string());
-    let world = n.contexts.values(WORLD).first().map(|s| s.to_string());
-    rest.remove_key(SERVER);
-    rest.remove_key(WORLD);
-    for v in n.contexts.values(SERVER).iter().skip(1) {
-        rest.add(SERVER, v);
-    }
-    for v in n.contexts.values(WORLD).iter().skip(1) {
-        rest.add(WORLD, v);
-    }
-    let expiry = if n.has_expiry() { n.expiry } else { 0 };
-    (
-        n.key.clone(),
-        n.value,
-        server.unwrap_or_else(|| "global".into()),
-        world.unwrap_or_else(|| "global".into()),
-        expiry,
-        rest.to_json(),
-    )
-}
 
 impl SqlStorage {
     /// `updatePermissions`: deletes by row id where known, else by every column; then inserts.
@@ -482,6 +445,7 @@ impl Storage for SqlStorage {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::horizon_luckperms_core::context::ContextSet;
 
     #[test]
     fn columns_round_trip() {

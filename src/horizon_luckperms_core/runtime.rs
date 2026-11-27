@@ -8,9 +8,10 @@
 use crate::horizon_luckperms_core::actionlog::Action;
 use crate::horizon_luckperms_core::calc::{self, HolderRef, Resolved, Tristate};
 use crate::horizon_luckperms_core::command::{self, CmdOutput};
-use crate::horizon_luckperms_core::config::Config;
+use crate::horizon_luckperms_core::config::{Config, Messaging};
 use crate::horizon_luckperms_core::context::{self, ContextSet};
 use crate::horizon_luckperms_core::messaging::{Message, SeenIds, UpdateBuffer};
+use crate::horizon_luckperms_core::messenger::{self, Messenger};
 use crate::horizon_luckperms_core::model::{Model, User};
 use crate::horizon_luckperms_core::storage::Storage;
 use std::collections::{HashMap, HashSet};
@@ -45,6 +46,22 @@ pub struct OnlinePlayer {
     pub game_mode: i32,
 }
 
+/// A vanilla or mod command a node grants (`minecraft.command.<name>` true): run as the player at `level`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GrantedJob {
+    pub player: u128,
+    pub line: String,
+    pub level: u8,
+}
+
+/// `/lp verbose command`: force `target` to run `command` while the sender's verbose listener records.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct VerboseJob {
+    pub sender: CommandSender,
+    pub target: u128,
+    pub command: String,
+}
+
 /// Who runs an `/lp` command.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CommandSender {
@@ -69,8 +86,10 @@ enum Job {
     Login { uuid: u128, name: String },
     /// Loads the player's data before they are placed; `done` gets the answer on the worker thread.
     PreLogin { uuid: u128, name: String, done: PreLoginDone },
-    Command { sender: CommandSender, args: Vec<String> },
+    Command { sender: CommandSender, label: String, args: Vec<String>, silent: bool },
     SyncAll { push: bool },
+    /// A frame the web editor sent over its live socket (see `editorsocket`).
+    SocketFrame { owner: u128, generation: u64, text: String },
     ReloadConfig(Config),
     Shutdown,
 }
@@ -82,14 +101,20 @@ pub struct Runtime {
     pub model: RwLock<Model>,
     online: RwLock<HashMap<u128, OnlinePlayer>>,
     left: Mutex<HashMap<u128, Instant>>,
+    /// Contexts other mods publish per player (`discordsrv:contexts`), added by [`Runtime::contexts_of`].
+    external: RwLock<HashMap<u128, Vec<(String, String)>>>,
     level_name: RwLock<String>,
     outbox: Mutex<Vec<Outgoing>>,
     console_queue: Mutex<Vec<String>>,
+    verbose_jobs: Mutex<Vec<VerboseJob>>,
+    granted_jobs: Mutex<Vec<GrantedJob>>,
     cache: Mutex<HashMap<CacheKey, (u64, Arc<Resolved>)>>,
     jobs: Mutex<Option<mpsc::Sender<Job>>>,
     worker: Mutex<Option<std::thread::JoinHandle<()>>>,
     storage_name: &'static str,
     messaging: AtomicBool,
+    /// `commands-rate-limit`: when each player's last accepted `/lp` ran.
+    rate: Mutex<HashMap<u128, Instant>>,
 }
 
 fn slot() -> &'static RwLock<Option<Arc<Runtime>>> {
@@ -116,6 +141,7 @@ const CONFIGURATION_CALCULATOR: &str = "me.lucko.luckperms.common.context.calcul
 pub fn start(cfg: Config, mut storage: Box<dyn Storage>, level_name: &str) -> Result<Arc<Runtime>, String> {
     stop();
     context::set_satisfy_all_values(cfg.context_satisfy_all);
+    crate::horizon_luckperms_core::model::set_group_name_rewrites(&cfg.group_name_rewrite);
     storage.init()?;
     let mut model = Model::default();
     for g in storage.load_all_groups()? {
@@ -128,34 +154,57 @@ pub fn start(cfg: Config, mut storage: Box<dyn Storage>, level_name: &str) -> Re
         model.tracks.insert(t.name.clone(), t);
     }
     command::mark_started();
-    let messaging = cfg.sql_messaging();
-    let last_id = if messaging { storage.messenger_init()? } else { -1 };
+    let kind = cfg.messaging();
+    let sql = kind == Messaging::Sql && storage.sql_messenger();
+    if kind == Messaging::Sql && !sql {
+        log(&format!("messaging service sql needs a MariaDB or MySQL storage, not {}; messaging is off", storage.name()));
+    }
+    // Redis and NATS are connected from their own threads; a broker that is down is retried there. A service that
+    // cannot run (RabbitMQ, PostgreSQL, plugin messaging) or is misconfigured is logged and leaves messaging off.
+    let external: Option<Box<dyn Messenger>> = match messenger::open(&cfg) {
+        Ok(m) => m,
+        Err(e) => {
+            log(&format!("messaging is off: {e}"));
+            None
+        }
+    };
+    let messaging = sql || external.is_some();
+    let label = external.as_ref().map(|m| m.name()).or(if sql { Some("sql") } else { None });
+    let last_id = if sql { storage.messenger_init()? } else { -1 };
     let (tx, rx) = mpsc::channel();
     let rt = Arc::new(Runtime {
         cfg: RwLock::new(Arc::new(cfg)),
         model: RwLock::new(model),
         online: RwLock::new(HashMap::new()),
         left: Mutex::new(HashMap::new()),
+        external: RwLock::new(HashMap::new()),
         level_name: RwLock::new(level_name.to_owned()),
         outbox: Mutex::new(Vec::new()),
         console_queue: Mutex::new(Vec::new()),
+        verbose_jobs: Mutex::new(Vec::new()),
+        granted_jobs: Mutex::new(Vec::new()),
         cache: Mutex::new(HashMap::new()),
         jobs: Mutex::new(Some(tx)),
         worker: Mutex::new(None),
         storage_name: storage.name(),
         messaging: AtomicBool::new(messaging),
+        rate: Mutex::new(HashMap::new()),
     });
     let w = rt.clone();
     let handle = std::thread::Builder::new()
         .name("luckperms-worker".into())
-        .spawn(move || Worker::new(w, storage, last_id).run(rx))
+        .spawn(move || {
+            let mut worker = Worker::new(w, storage, last_id);
+            worker.messenger = external;
+            worker.run(rx)
+        })
         .map_err(|e| e.to_string())?;
     *rt.worker.lock().unwrap_or_else(|e| e.into_inner()) = Some(handle);
     if let Ok(mut s) = slot().write() {
         *s = Some(rt.clone());
     }
     let groups = rt.model.read().map(|m| m.groups.len()).unwrap_or(0);
-    log(&format!("loaded {groups} groups from {}; messaging {}", rt.storage_name, if messaging { "sql" } else { "off" }));
+    log(&format!("loaded {groups} groups from {}; messaging {}", rt.storage_name, label.unwrap_or("off")));
     Ok(rt)
 }
 
@@ -166,14 +215,18 @@ pub fn detached(cfg: Config, model: Model) -> Runtime {
         model: RwLock::new(model),
         online: RwLock::new(HashMap::new()),
         left: Mutex::new(HashMap::new()),
+        external: RwLock::new(HashMap::new()),
         level_name: RwLock::new("world".into()),
         outbox: Mutex::new(Vec::new()),
         console_queue: Mutex::new(Vec::new()),
+        verbose_jobs: Mutex::new(Vec::new()),
+        granted_jobs: Mutex::new(Vec::new()),
         cache: Mutex::new(HashMap::new()),
         jobs: Mutex::new(None),
         worker: Mutex::new(None),
         storage_name: "memory",
         messaging: AtomicBool::new(false),
+        rate: Mutex::new(HashMap::new()),
     }
 }
 
@@ -249,6 +302,9 @@ impl Runtime {
         if let Ok(mut o) = self.online.write() {
             o.remove(&uuid);
         }
+        if let Ok(mut e) = self.external.write() {
+            e.remove(&uuid);
+        }
         self.left.lock().unwrap_or_else(|e| e.into_inner()).insert(uuid, Instant::now());
     }
 
@@ -268,6 +324,18 @@ impl Runtime {
 
     pub fn online_players(&self) -> Vec<OnlinePlayer> {
         self.online.read().map(|o| o.values().cloned().collect()).unwrap_or_default()
+    }
+
+    /// The contexts another mod calculates for a player (the original's DiscordSRV context calculator); an empty
+    /// list forgets them.
+    pub fn set_external_contexts(&self, uuid: u128, pairs: Vec<(String, String)>) {
+        if let Ok(mut e) = self.external.write() {
+            if pairs.is_empty() {
+                e.remove(&uuid);
+            } else {
+                e.insert(uuid, pairs);
+            }
+        }
     }
 
     pub fn set_level_name(&self, name: &str) {
@@ -301,6 +369,11 @@ impl Runtime {
         }
         if !cfg.calculator_disabled(CONFIGURATION_CALCULATOR) {
             for (k, v) in &cfg.static_contexts {
+                set.add(k, v);
+            }
+        }
+        if let Ok(e) = self.external.read() {
+            for (k, v) in e.get(&p.uuid).into_iter().flatten() {
                 set.add(k, v);
             }
         }
@@ -377,6 +450,17 @@ impl Runtime {
         set
     }
 
+    /// Which processor decided a check for an online player (`direct`, `regex`, `wildcard`, `op` or empty).
+    pub fn check_processor(&self, uuid: u128, permission: &str) -> &'static str {
+        match self.online_player(uuid) {
+            Some(p) => {
+                let ctx = self.contexts_of(&p);
+                self.resolved(uuid, &ctx, self.is_op(p.op_level)).check(permission).processor
+            }
+            None => "",
+        }
+    }
+
     /// The model's change counter: it moves on every change of a group, user or track.
     pub fn model_version(&self) -> u64 {
         self.model.read().map(|m| m.version).unwrap_or_else(|e| e.into_inner().version)
@@ -424,6 +508,23 @@ impl Runtime {
         self.resolved(uuid, &ctx, false).check(&node).result.as_bool()
     }
 
+    pub fn queue_granted_job(&self, job: GrantedJob) {
+        self.granted_jobs.lock().unwrap_or_else(|e| e.into_inner()).push(job);
+    }
+
+    pub fn drain_granted_jobs(&self) -> Vec<GrantedJob> {
+        std::mem::take(&mut *self.granted_jobs.lock().unwrap_or_else(|e| e.into_inner()))
+    }
+
+    /// Queues a forced command of `/lp verbose command` for the next tick.
+    pub fn queue_verbose_job(&self, job: VerboseJob) {
+        self.verbose_jobs.lock().unwrap_or_else(|e| e.into_inner()).push(job);
+    }
+
+    pub fn drain_verbose_jobs(&self) -> Vec<VerboseJob> {
+        std::mem::take(&mut *self.verbose_jobs.lock().unwrap_or_else(|e| e.into_inner()))
+    }
+
     /// Queues `execute as <name> at <name> run <command>` for the next tick.
     pub fn queue_console_command(&self, line: String) {
         self.console_queue.lock().unwrap_or_else(|e| e.into_inner()).push(line);
@@ -433,12 +534,50 @@ impl Runtime {
 
     /// Runs `/lp <args>` on the worker; the answer arrives through the outbox.
     pub fn submit_command(&self, sender: CommandSender, line: &str) {
+        self.submit_command_labelled(sender, command::LABEL, line);
+    }
+
+    /// Like `submit_command`, for a command typed as `/<label> ...`.
+    pub fn submit_command_labelled(&self, sender: CommandSender, label: &str, line: &str) {
+        if self.rate_limited(&sender) {
+            log(&format!("Player '{}' is spamming LuckPerms commands. Ignoring further inputs.", crate::horizon_luckperms_core::uuid::format(sender.uuid)));
+            return;
+        }
         let args = crate::horizon_luckperms_core::text::split_args(line);
-        self.send(Job::Command { sender, args });
+        self.send(Job::Command { sender, label: label.to_owned(), args, silent: false });
+    }
+
+    /// `CommandManager.executeCommand`'s rate limit (`commands-rate-limit`): a player's command within 500 ms of
+    /// their last accepted one is dropped (an expiring set: a refused try does not renew the entry). The console
+    /// is never limited.
+    fn rate_limited(&self, sender: &CommandSender) -> bool {
+        if sender.console || sender.uuid == crate::horizon_luckperms_core::uuid::CONSOLE || !self.config().commands_rate_limit {
+            return false;
+        }
+        let now = Instant::now();
+        let mut map = self.rate.lock().unwrap_or_else(|e| e.into_inner());
+        map.retain(|_, t| now.duration_since(*t) < Duration::from_millis(500));
+        if map.contains_key(&sender.uuid) {
+            return true;
+        }
+        map.insert(sender.uuid, now);
+        false
+    }
+
+    /// Runs `/lp <args>` without answering anyone: what the Vault provider uses for its writes.
+    pub fn submit_silent(&self, sender: CommandSender, args: Vec<String>) {
+        self.send(Job::Command { sender, label: command::LABEL.to_owned(), args, silent: true });
     }
 
     pub fn reload_config(&self, cfg: Config) {
         self.send(Job::ReloadConfig(cfg));
+    }
+
+    /// A frame from the web editor's socket of `owner`, to be handled on the worker thread.
+    pub fn submit_socket_frame(&self, owner: u128, generation: u64, text: String) {
+        if let Some(tx) = self.jobs.lock().unwrap_or_else(|e| e.into_inner()).as_ref() {
+            let _ = tx.send(Job::SocketFrame { owner, generation, text });
+        }
     }
 
     pub fn request_sync(&self, push: bool) {
@@ -455,6 +594,8 @@ impl Runtime {
 struct Worker {
     rt: Arc<Runtime>,
     storage: Box<dyn Storage>,
+    /// Redis or NATS, when the config selects one; otherwise the storage carries the (SQL) messenger.
+    messenger: Option<Box<dyn Messenger>>,
     last_id: i64,
     seen: SeenIds,
     buffer: UpdateBuffer,
@@ -472,6 +613,7 @@ impl Worker {
         Worker {
             rt,
             storage,
+            messenger: None,
             last_id,
             seen: SeenIds::default(),
             buffer: UpdateBuffer::default(),
@@ -489,6 +631,9 @@ impl Worker {
                 Ok(Job::Shutdown) | Err(mpsc::RecvTimeoutError::Disconnected) => {
                     if self.buffer.pending() {
                         self.push(Message::Update { id: crate::horizon_luckperms_core::uuid::random_v4() });
+                    }
+                    if let Some(m) = self.messenger.as_mut() {
+                        m.close();
                     }
                     return;
                 }
@@ -519,9 +664,17 @@ impl Worker {
                     done(Err(PRE_LOGIN_REFUSAL.to_owned()));
                 }
             },
-            Job::Command { sender, args } => {
-                let out = command::execute(&self.rt, self.storage.as_mut(), &sender, &args);
+            Job::Command { sender, label, args, silent } => {
+                let mut out = command::execute_labelled(&self.rt, self.storage.as_mut(), &sender, &label, &args);
+                if silent {
+                    out.lines.clear();
+                }
                 self.finish(&sender, out);
+            }
+            Job::SocketFrame { owner, generation, text } => {
+                if let Some((sender, out)) = command::socket_frame(&self.rt, self.storage.as_mut(), owner, generation, &text) {
+                    self.finish(&sender, out);
+                }
             }
             Job::SyncAll { push } => {
                 self.sync_all();
@@ -530,8 +683,9 @@ impl Worker {
                 }
             }
             Job::ReloadConfig(cfg) => {
-                self.rt.messaging.store(cfg.sql_messaging(), Ordering::Relaxed);
+                self.rt.messaging.store((cfg.sql_messaging() && self.storage.sql_messenger()) || self.messenger.is_some(), Ordering::Relaxed);
                 context::set_satisfy_all_values(cfg.context_satisfy_all);
+                crate::horizon_luckperms_core::model::set_group_name_rewrites(&cfg.group_name_rewrite);
                 if let Ok(mut c) = self.rt.cfg.write() {
                     *c = Arc::new(cfg);
                 }
@@ -604,7 +758,12 @@ impl Worker {
             return;
         }
         self.seen.add(msg.id());
-        if let Err(e) = self.storage.messenger_send(&msg.encode()) {
+        let encoded = msg.encode();
+        let sent = match self.messenger.as_mut() {
+            Some(m) => m.send(&encoded),
+            None => self.storage.messenger_send(&encoded),
+        };
+        if let Err(e) = sent {
             log(&format!("messenger send failed: {e}"));
         }
     }
@@ -677,7 +836,13 @@ impl Worker {
 
     fn periodic(&mut self) {
         let cfg = self.rt.config();
-        if self.rt.messaging_on() && self.last_poll.elapsed() >= Duration::from_secs(1) {
+        if self.rt.messaging_on() && self.messenger.is_some() {
+            // The broker's threads queue what arrives; taking it is cheap, so every tick.
+            let received = self.messenger.as_mut().map(|m| m.poll()).unwrap_or_default();
+            for raw in received {
+                self.incoming(&raw, &cfg);
+            }
+        } else if self.rt.messaging_on() && self.last_poll.elapsed() >= Duration::from_secs(1) {
             self.last_poll = Instant::now();
             match self.storage.messenger_poll(self.last_id) {
                 Ok(rows) => {
@@ -689,7 +854,7 @@ impl Worker {
                 Err(e) => log(&format!("messenger poll failed: {e}")),
             }
         }
-        if self.rt.messaging_on() && self.last_housekeep.elapsed() >= Duration::from_secs(30) {
+        if self.rt.messaging_on() && self.messenger.is_none() && self.last_housekeep.elapsed() >= Duration::from_secs(30) {
             self.last_housekeep = Instant::now();
             let _ = self.storage.messenger_housekeep();
         }
@@ -704,6 +869,11 @@ impl Worker {
             self.last_audit = Instant::now();
             self.audit_expired();
             self.unload_left(&cfg);
+            #[cfg(feature = "wire")]
+            {
+                let rt = self.rt.clone();
+                crate::horizon_luckperms_core::editorsocket::tick(&|owner| owner == crate::horizon_luckperms_core::uuid::CONSOLE || rt.online_player(owner).is_some());
+            }
         }
     }
 
@@ -814,6 +984,21 @@ mod tests {
     }
 
     #[test]
+    fn external_contexts_join_the_players_set() {
+        let mut cfg = Config::default();
+        cfg.storage.method = "memory".into();
+        cfg.messaging_service = "none".into();
+        let rt = start(cfg, Box::new(MemoryStorage::default()), "world").unwrap();
+        let p = OnlinePlayer { uuid: 7, name: "Eve".into(), op_level: 0, dimension: "minecraft:overworld".into(), game_mode: 0 };
+        rt.set_external_contexts(7, vec![("discordsrv:linked".into(), "true".into()), ("discordsrv:role".into(), "Admin".into())]);
+        let ctx = rt.contexts_of(&p);
+        assert!(ctx.contains("discordsrv:linked", "true"));
+        assert!(ctx.contains("discordsrv:role", "admin"));
+        rt.set_external_contexts(7, Vec::new());
+        assert!(!rt.contexts_of(&p).contains_key("discordsrv:linked"));
+    }
+
+    #[test]
     fn login_command_and_check() {
         let mut cfg = Config::default();
         cfg.storage.method = "memory".into();
@@ -857,6 +1042,23 @@ mod pre_login_tests {
         let rt = Arc::new(detached(cfg, Model::default()));
         let w = Worker::new(rt.clone(), Box::new(storage), -1);
         (rt, w)
+    }
+
+    #[test]
+    fn commands_rate_limit_drops_a_second_command_within_500_ms() {
+        let (rt, _w) = worker(MemoryStorage::default());
+        let alice = CommandSender { uuid: 0xa11ce, name: "Alice".into(), console: false };
+        assert!(!rt.rate_limited(&alice));
+        assert!(rt.rate_limited(&alice), "a second command at once is dropped");
+        assert!(!rt.rate_limited(&CommandSender::console()));
+        assert!(!rt.rate_limited(&CommandSender::console()), "the console is never limited");
+        std::thread::sleep(Duration::from_millis(550));
+        assert!(!rt.rate_limited(&alice), "the entry expired");
+        let mut cfg = (*rt.config()).clone();
+        cfg.commands_rate_limit = false;
+        *rt.cfg.write().unwrap() = Arc::new(cfg);
+        assert!(!rt.rate_limited(&alice));
+        assert!(!rt.rate_limited(&alice), "off: no limit");
     }
 
     #[test]

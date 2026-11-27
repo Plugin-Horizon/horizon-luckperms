@@ -86,6 +86,16 @@ pub(crate) fn track_command(c: &mut Ctx<'_>, a: Args) {
         return;
     }
     let Some(t) = c.load_track(&a.get(0)) else { return };
+    {
+        // `ArgumentPermissions` for tracks: view for `info`/`editor`, modify for the rest.
+        let base = format!("luckperms.track.{}", ch.node);
+        let target = super::access::Target::Track(&t.name);
+        let denied = if matches!(ch.name, "info" | "editor" | "clone") { c.deny_view(&base, &target) } else { c.deny_modify(&base, &target) };
+        if denied {
+            c.no_permission();
+            return;
+        }
+    }
     let rest = a.sub(2);
     run(c, t, ch.name, ch.spec, rest);
 }

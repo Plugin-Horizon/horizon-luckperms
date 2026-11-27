@@ -19,37 +19,17 @@ pub const CONTEXTS_JSON: &str = "contexts.json";
 /// Keys the port reads on purpose and does not act on, with the reason. The `check_original` report
 /// does not count them as missing. Mirrored in GAPS.md.
 pub const IGNORED: &[(&str, &str)] = &[
-    ("data.mongodb-collection-prefix", "no MongoDB storage"),
-    ("data.mongodb-connection-uri", "no MongoDB storage"),
-    ("split-storage.methods", "only used with split storage, which is refused when enabled"),
-    ("redis.address", "Redis messenger not spoken; refused when enabled"),
-    ("nats.address", "NATS messenger not spoken; refused when enabled"),
-    ("rabbitmq.address", "RabbitMQ messenger not spoken; refused when enabled"),
-    ("rabbitmq.vhost", "RabbitMQ messenger not spoken; refused when enabled"),
-    ("redis.username", "Redis messenger not spoken; its credentials are not used"),
-    ("redis.password", "Redis messenger not spoken; its credentials are not used"),
-    ("redis.sentinel.enabled", "Redis messenger not spoken; refused when enabled"),
-    ("redis.sentinel.master", "Redis messenger not spoken; its credentials are not used"),
-    ("redis.sentinel.username", "Redis messenger not spoken; its credentials are not used"),
-    ("redis.sentinel.password", "Redis messenger not spoken; its credentials are not used"),
-    ("nats.username", "NATS messenger not spoken; its credentials are not used"),
-    ("nats.password", "NATS messenger not spoken; its credentials are not used"),
-    ("nats.token", "NATS messenger not spoken; its credentials are not used"),
-    ("rabbitmq.username", "RabbitMQ messenger not spoken; its credentials are not used"),
-    ("rabbitmq.password", "RabbitMQ messenger not spoken; its credentials are not used"),
     ("apply-bukkit-child-permissions", "Bukkit permission attachments do not exist on Horizon"),
     ("apply-bukkit-attachment-permissions", "Bukkit permission attachments do not exist on Horizon"),
     ("apply-sponge-implicit-wildcards", "Sponge only"),
     ("auto-install-translations", "English only (GAPS.md)"),
     ("register-command-list-data", "Bukkit command list data; Horizon builds its own tree"),
+    ("cancel-failed-logins", "not read by LuckPerms' Bukkit module either (Velocity, Bungee and Forge only); a failed data load always refuses the login here (test a_failed_load_refuses_the_login_with_the_generic_reason)"),
+    ("log-synchronously-in-commands", "commands run on the worker thread and write their log entry before the answer is sent; there is no asynchronous log dispatch to wait for"),
+    ("chat-formatter.enabled", "deprecated; only LuckPerms' Hytale module reads it, Paper has no chat formatter"),
+    ("integrated-server-owner-bypasses-checks", "concerns the owner of an integrated (singleplayer) server; a dedicated Horizon server has none, and LuckPerms' Paper module never reads it"),
+    ("editor-lazily-generate-key", "the editor key is made when first needed (editorsocket.rs), which is what the lazy setting asks for"),
     ("use-server-uuid-cache", "Horizon's own player list is used"),
-    ("vault-unsafe-lookups", "Vault is not ported"),
-    ("vault-group-use-displaynames", "Vault is not ported"),
-    ("vault-npc-group", "Vault is not ported"),
-    ("vault-npc-op-status", "Vault is not ported"),
-    ("vault-server", "Vault is not ported"),
-    ("vault-include-global", "Vault is not ported"),
-    ("vault-ignore-world", "Vault is not ported"),
 ];
 
 /// Map keys whose entries are data (group or world names): a report shows them as `<map>.*`.
@@ -229,33 +209,130 @@ pub fn config_from_yaml(text: &str, reads: &mut Reads) -> Result<Config, String>
         }
         c.storage.pool_properties = k.texts("data.pool-settings.properties");
 
-        // Split storage keeps its data in H2 files that this port does not read.
-        if k.flag("split-storage.enabled") == Some(true) {
-            return Err(format!("{CONFIG_YML}: split-storage is enabled (its H2 files are not read); not started"));
+        // Split storage: which storage holds which data. A method the port cannot run is refused when it opens.
+        set!(k, "split-storage.enabled", c.split_storage.enabled);
+        if let Some(v) = k.text("split-storage.methods.user") {
+            c.split_storage.methods.user = v;
+        }
+        if let Some(v) = k.text("split-storage.methods.group") {
+            c.split_storage.methods.group = v;
+        }
+        if let Some(v) = k.text("split-storage.methods.track") {
+            c.split_storage.methods.track = v;
+        }
+        if let Some(v) = k.text("split-storage.methods.uuid") {
+            c.split_storage.methods.uuid = v;
+        }
+        if let Some(v) = k.text("split-storage.methods.log") {
+            c.split_storage.methods.log = v;
         }
 
-        // Messaging: the SQL messenger is the only one spoken. A non-SQL messenger the original would use
-        // is refused: messaging stays off and the service says so.
-        let service = k.text("messaging-service").unwrap_or_else(|| "auto".into()).trim().to_lowercase();
-        let mut enabled: Vec<&str> = Vec::new();
-        for (name, path) in [("redis", "redis.enabled"), ("nats", "nats.enabled"), ("rabbitmq", "rabbitmq.enabled")] {
-            if k.flag(path) == Some(true) {
-                enabled.push(name);
-            }
+        // Messaging: SQL, Redis and NATS run; RabbitMQ, PostgreSQL and plugin messaging are refused.
+        if let Some(v) = k.text("messaging-service") {
+            c.messaging_service = v.trim().to_lowercase();
         }
-        c.messenger_refused = match service.as_str() {
-            "sql" | "none" => None,
-            "redis" | "nats" | "rabbitmq" => Some(service.clone()),
-            _ => enabled.first().map(|s| s.to_string()),
-        };
-        if let Some(m) = &c.messenger_refused {
-            notes.push(format!("messaging-service: {m} is not supported (messaging off)"));
+        set!(k, "redis.enabled", c.redis.enabled);
+        if let Some(v) = k.text("redis.address") {
+            c.redis.address = v;
         }
-        c.messaging_service = service;
+        if let Some(v) = k.list("redis.addresses") {
+            c.redis.addresses = v;
+        }
+        if let Some(v) = k.text("redis.username") {
+            c.redis.username = v;
+        }
+        if let Some(v) = k.text("redis.password") {
+            c.redis.password = v;
+        }
+        set!(k, "redis.ssl", c.redis.ssl);
+        set!(k, "redis.sentinel.enabled", c.redis.sentinel.enabled);
+        if let Some(v) = k.text("redis.sentinel.master") {
+            c.redis.sentinel.master = v;
+        }
+        if let Some(v) = k.list("redis.sentinel.addresses") {
+            c.redis.sentinel.addresses = v;
+        }
+        if let Some(v) = k.text("redis.sentinel.username") {
+            c.redis.sentinel.username = v;
+        }
+        if let Some(v) = k.text("redis.sentinel.password") {
+            c.redis.sentinel.password = v;
+        }
+        set!(k, "nats.enabled", c.nats.enabled);
+        if let Some(v) = k.text("nats.address") {
+            c.nats.address = v;
+        }
+        if let Some(v) = k.text("nats.username") {
+            c.nats.username = v;
+        }
+        if let Some(v) = k.text("nats.password") {
+            c.nats.password = v;
+        }
+        if let Some(v) = k.text("nats.token") {
+            c.nats.token = v;
+        }
+        set!(k, "nats.ssl", c.nats.ssl);
+        set!(k, "rabbitmq.enabled", c.rabbitmq.enabled);
+        if let Some(v) = k.text("rabbitmq.address") {
+            c.rabbitmq.address = v;
+        }
+        if let Some(v) = k.text("rabbitmq.vhost") {
+            c.rabbitmq.vhost = v;
+        }
+        if let Some(v) = k.text("rabbitmq.username") {
+            c.rabbitmq.username = v;
+        }
+        if let Some(v) = k.text("rabbitmq.password") {
+            c.rabbitmq.password = v;
+        }
+        if let Some(v) = k.text("data.mongodb-collection-prefix") {
+            c.storage.mongodb_collection_prefix = v;
+        }
+        if let Some(v) = k.text("data.mongodb-connection-uri") {
+            c.storage.mongodb_connection_uri = v;
+        }
 
+        // `SYNC_TIME`: `sync-minutes`, else `data.sync-minutes`.
         if let Some(v) = k.number("sync-minutes") {
             c.sync_minutes = v;
         }
+        if c.sync_minutes < 0 {
+            if let Some(v) = k.number("data.sync-minutes") {
+                c.sync_minutes = v;
+            }
+        }
+        // `data.pool-size` is the old name of `data.pool-settings.maximum-pool-size`.
+        if k.node("data.pool-settings.maximum-pool-size").is_none() {
+            if let Some(v) = k.number("data.pool-size") {
+                c.storage.maximum_pool_size = v.max(1) as usize;
+            }
+        }
+        if let Some(v) = k.text("data.rest-url") {
+            c.storage.rest_url = v;
+        }
+        if let Some(v) = k.text("data.rest-auth-key") {
+            c.storage.rest_auth_key = v;
+        }
+        if let Some(v) = k.text("bytebin-url") {
+            c.bytebin_url = v;
+        }
+        if let Some(v) = k.text("web-editor-url") {
+            c.web_editor_url = v;
+        }
+        set!(k, "commands-rate-limit", c.commands_rate_limit);
+        c.group_name_rewrite = k.texts("group-name-rewrite").into_iter().map(|(a, b)| (a.to_lowercase(), b)).collect();
+        set!(k, "use-vault-server", c.use_vault_server);
+        if let Some(v) = k.text("vault-server") {
+            c.vault_server = v.to_lowercase();
+        }
+        set!(k, "vault-include-global", c.vault_include_global);
+        set!(k, "vault-ignore-world", c.vault_ignore_world);
+        set!(k, "vault-group-use-displaynames", c.vault_group_use_displaynames);
+        if let Some(v) = k.text("vault-npc-group") {
+            c.vault_npc_group = v;
+        }
+        set!(k, "vault-npc-op-status", c.vault_npc_op_status);
+        set!(k, "vault-unsafe-lookups", c.vault_unsafe_lookups);
         set!(k, "auto-push-updates", c.auto_push_updates);
         set!(k, "push-log-entries", c.push_log_entries);
         set!(k, "broadcast-received-log-entries", c.broadcast_received_log_entries);
@@ -290,6 +367,9 @@ pub fn config_from_yaml(text: &str, reads: &mut Reads) -> Result<Config, String>
         if let Some(v) = k.list("disabled-context-calculators") {
             c.disabled_context_calculators = v;
         }
+        if let Some(v) = k.text("bytesocks-url") {
+            c.bytesocks_url = v;
+        }
         if let Some(v) = k.text("verbose-viewer-url") {
             c.verbose_viewer_url = v;
         }
@@ -311,39 +391,28 @@ pub fn config_from_yaml(text: &str, reads: &mut Reads) -> Result<Config, String>
         players_console(&mut k, "disable-luckperms-commands", &mut c.disable_luckperms_commands);
         players_console(&mut k, "commands-read-only-mode", &mut c.commands_read_only_mode);
 
+        set!(k, "auto-op", c.auto_op);
+        set!(k, "require-sender-group-membership-to-modify", c.require_sender_group_membership);
+        set!(k, "argument-based-command-permissions", c.argument_based_command_permissions);
+        set!(k, "apply-default-negated-permissions-before-wildcards", c.apply_default_negated_before_wildcards);
+        if let Some(v) = k.text("meta-value-selection-default") {
+            c.meta_value_selection_default = v.to_lowercase();
+        }
+        c.meta_value_selection = k.texts("meta-value-selection").into_iter().map(|(k, v)| (k.to_lowercase(), v.to_lowercase())).collect();
+        if c.auto_op {
+            // `OPS_ENABLED`: `!auto-op && enable-ops`.
+            c.horizon.enable_ops = false;
+        }
+
         // Read and not supported: a non-default value is noted (a key name only, never its value).
-        if k.flag("auto-op") == Some(true) {
-            notes.push("auto-op (not supported)".into());
-        }
-        if k.flag("argument-based-command-permissions") == Some(true) {
-            notes.push("argument-based-command-permissions (not supported)".into());
-        }
-        if k.flag("require-sender-group-membership-to-modify") == Some(true) {
-            notes.push("require-sender-group-membership-to-modify (not supported)".into());
-        }
-        if k.flag("apply-default-negated-permissions-before-wildcards") == Some(true) {
-            notes.push("apply-default-negated-permissions-before-wildcards (not supported)".into());
-        }
-        if k.flag("resolve-command-selectors") == Some(true) {
-            notes.push("resolve-command-selectors (not supported)".into());
-        }
+        set!(k, "resolve-command-selectors", c.resolve_command_selectors);
         if k.flag("update-client-command-list") == Some(false) {
             notes.push("update-client-command-list (set false; the port always updates the list)".into());
-        }
-        if k.flag("use-vault-server") == Some(true) {
-            notes.push("use-vault-server (not supported)".into());
-        }
-        if k.text("meta-value-selection-default").is_some_and(|v| v != "inheritance") {
-            notes.push("meta-value-selection-default (only inheritance is supported)".into());
-        }
-        if k.node("meta-value-selection").is_some_and(|n| !n.entries().is_empty()) {
-            notes.push("meta-value-selection (not supported)".into());
         }
     }
     for (path, _) in IGNORED {
         reads.mark(path);
     }
-    reads.mark("use-vault-server");
     c.unsupported = notes;
     Ok(c)
 }
@@ -563,25 +632,67 @@ auto-op: false
     }
 
     #[test]
-    fn non_sql_messengers_are_refused_not_spoken() {
-        let (c, _) = load("redis:\n  enabled: true\n  address: example.test\n");
-        assert_eq!(c.messenger_refused.as_deref(), Some("redis"));
+    fn messaging_service_follows_the_original_factory() {
+        use crate::horizon_luckperms_core::config::Messaging;
+        // Redis enabled under auto: Redis runs, with the address read.
+        let (c, _) = load("redis:\n  enabled: true\n  address: example.test:6380\n");
+        assert_eq!(c.messaging(), Messaging::Redis);
         assert!(!c.sql_messaging());
-        assert!(c.unsupported.iter().any(|n| n.starts_with("messaging-service: redis")));
+        assert_eq!(c.redis.address, "example.test:6380");
+        // NATS likewise; Redis wins when both are on (auto order: redis, rabbitmq, nats).
+        let (c, _) = load("nats:\n  enabled: true\n  address: example.test\n  token: not-a-token\n");
+        assert_eq!(c.messaging(), Messaging::Nats);
+        assert_eq!(c.nats.token, "not-a-token");
+        let (c, _) = load("redis:\n  enabled: true\nnats:\n  enabled: true\n");
+        assert_eq!(c.messaging(), Messaging::Redis);
+        let (c, _) = load("rabbitmq:\n  enabled: true\n");
+        assert_eq!(c.messaging(), Messaging::Rabbit);
         // An explicit sql service ignores the enabled flags.
         let (c, _) = load("messaging-service: sql\nredis:\n  enabled: true\n");
-        assert_eq!(c.messenger_refused, None);
+        assert_eq!(c.messaging(), Messaging::Sql);
         assert!(c.sql_messaging());
-        // An explicit none stays none.
+        // An explicit service whose flag is off is no service (LuckPerms warns and starts none).
+        let (c, _) = load("messaging-service: redis\n");
+        assert_eq!(c.messaging(), Messaging::Off);
+        // `none` is read as `auto` (MessagingFactory); with SQL storage that is the SQL messenger, `notsql` is off.
         let (c, _) = load("messaging-service: none\n");
-        assert!(!c.sql_messaging());
+        assert_eq!(c.messaging(), Messaging::Sql);
+        let (c, _) = load("messaging-service: notsql\n");
+        assert_eq!(c.messaging(), Messaging::Off);
+        // File storage has no SQL messenger under auto.
+        let (c, _) = load("storage-method: yaml\n");
+        assert_eq!(c.messaging(), Messaging::Off);
+        let (c, _) = load("storage-method: postgresql\n");
+        assert_eq!(c.messaging(), Messaging::Postgres);
+        let (c, _) = load("messaging-service: pluginmsg\n");
+        assert_eq!(c.messaging(), Messaging::PluginMsg);
     }
 
     #[test]
-    fn split_storage_is_refused() {
-        let mut r = Reads::default();
-        let err = config_from_yaml("split-storage:\n  enabled: true\n", &mut r).unwrap_err();
-        assert!(err.contains("split-storage"), "{err}");
+    fn redis_and_nats_credentials_are_read_and_never_debug_printed() {
+        let (c, _) = load("redis:\n  enabled: true\n  address: r.example\n  username: u\n  password: hunter2-not-real\n  ssl: true\n  sentinel:\n    enabled: true\n    master: m1\n    addresses:\n      - s1.example:26380\n    password: sentinel-not-real\n");
+        assert_eq!(c.redis.username, "u");
+        assert_eq!(c.redis.password, "hunter2-not-real");
+        assert!(c.redis.ssl && c.redis.sentinel.enabled);
+        assert_eq!(c.redis.sentinel.master, "m1");
+        assert_eq!(c.redis.sentinel.addresses, vec!["s1.example:26380"]);
+        let shown = format!("{c:?}");
+        assert!(!shown.contains("hunter2") && !shown.contains("sentinel-not-real"), "a password reached Debug output");
+    }
+
+    #[test]
+    fn split_storage_methods_are_read() {
+        let (c, _) = load("split-storage:\n  enabled: true\n  methods:\n    user: mariadb\n    group: yaml\n    track: yaml\n    uuid: sqlite\n    log: json\n");
+        assert!(c.split_storage.enabled);
+        assert_eq!(c.split_storage.methods.user, "mariadb");
+        assert_eq!(c.split_storage.methods.group, "yaml");
+        assert_eq!(c.split_storage.methods.uuid, "sqlite");
+        assert_eq!(c.split_storage.methods.log, "json");
+        assert_eq!(c.storage_methods(), vec!["mariadb", "yaml", "yaml", "sqlite", "json"]);
+        // A MariaDB part makes `auto` pick the SQL messenger.
+        assert!(c.sql_messaging());
+        let (c, _) = load("split-storage:\n  enabled: true\n");
+        assert_eq!(c.split_storage.methods.user, "h2", "unset methods default to h2 as in LuckPerms");
     }
 
     #[test]
@@ -599,9 +710,12 @@ auto-op: false
         assert!(!c.unsupported.iter().any(|n| n.contains("not-a-real-password")));
         assert!(!c.unsupported.iter().any(|n| n.starts_with("auto-op")), "auto-op false is default");
         let (c, _) = load("auto-op: true\nuse-vault-server: true\nmeta-value-selection-default: weight\n");
-        assert!(c.unsupported.iter().any(|n| n.starts_with("auto-op")));
-        assert!(c.unsupported.iter().any(|n| n.starts_with("use-vault-server")));
-        assert!(c.unsupported.iter().any(|n| n.starts_with("meta-value-selection-default")));
+        assert!(c.auto_op && !c.horizon.enable_ops, "auto-op turns enable-ops off");
+        assert!(c.use_vault_server);
+        assert_eq!(c.meta_value_selection_default, "weight");
+        let (c, _) = load("meta-value-selection:\n  Level: Highest-Number\nrequire-sender-group-membership-to-modify: true\n");
+        assert_eq!(c.meta_value_selection.get("level").map(String::as_str), Some("highest-number"));
+        assert!(c.require_sender_group_membership);
     }
 
     #[test]
@@ -676,5 +790,34 @@ auto-op: false
         assert_eq!(read, vec!["default-contexts", "static-contexts"]);
         assert_eq!(rep.unread, vec!["extra"]);
         assert!(inspect_json("{").error.is_some());
+    }
+}
+
+#[cfg(test)]
+mod round6_tests {
+    use super::*;
+
+    fn load(text: &str) -> Config {
+        let mut reads = Reads::default();
+        config_from_yaml(text, &mut reads).unwrap()
+    }
+
+    #[test]
+    fn the_keys_the_audit_found_missing_are_read() {
+        let c = load(
+            "data:\n  sync-minutes: 9\n  pool-size: 7\n  rest-url: http://rest.example:8080/\n  rest-auth-key: k\nbytebin-url: https://b.example/\nweb-editor-url: https://e.example/\ncommands-rate-limit: false\ngroup-name-rewrite:\n  Admin: Administrator\nuse-vault-server: true\nvault-server: Hub\nvault-include-global: false\nvault-ignore-world: true\nvault-group-use-displaynames: false\nvault-npc-group: npcs\nvault-npc-op-status: true\n",
+        );
+        assert_eq!(c.sync_minutes, 9);
+        assert_eq!(c.storage.maximum_pool_size, 7);
+        assert_eq!(c.storage.rest_url, "http://rest.example:8080/");
+        assert_eq!(c.storage.rest_auth_key, "k");
+        assert_eq!(c.bytebin_url, "https://b.example/");
+        assert_eq!(c.web_editor_url, "https://e.example/");
+        assert!(!c.commands_rate_limit);
+        assert_eq!(c.group_name_rewrite.get("admin").map(String::as_str), Some("Administrator"));
+        assert!(c.use_vault_server && !c.vault_include_global && c.vault_ignore_world && !c.vault_group_use_displaynames && c.vault_npc_op_status);
+        assert_eq!((c.vault_server.as_str(), c.vault_npc_group.as_str()), ("hub", "npcs"));
+        let d = load("server: global\n");
+        assert!(d.commands_rate_limit && d.vault_include_global && d.vault_group_use_displaynames);
     }
 }

@@ -12,13 +12,15 @@ use crate::horizon_luckperms_core::runtime::OnlinePlayer;
 use crate::horizon_luckperms_core::text as lp_text;
 use crate::horizon_luckperms_core::Recipient;
 use mod_api::{
-    Command, CommandArgumentValue, CommandSource, Flow, Hooks, PermissionError,
-    PermissionGatherHandlerEvent, PermissionHandlerQueryEvent, PermissionValue, PermissionValueType,
-    PlayerCommandEvent, PlayerCommandsSentEvent, PlayerLoggedInEvent, PlayerLoggedOutEvent, PlayerLoginEvent,
+    Command, CommandArgumentError, CommandArgumentKind, CommandArgumentType, CommandArgumentValue, CommandSource, CommandSuggestion,
+    NodeDefault, PermissionGatherNodesEvent, PermissionNode, RegisterNodeCommandsEvent, Registrar, RegistrationContext, Flow, Hooks, PermissionError,
+    ModServiceCallEvent, PermissionGatherHandlerEvent, PermissionHandlerQueryEvent, PermissionLevel, PermissionValue, PermissionValueType,
+    PlayerCommandEvent, PlayerCommandsSentEvent, PlayerCommandsSentRestoreEvent, PlayerLoggedInEvent, PlayerLoggedOutEvent, PlayerLoginEvent,
     RegisterCommandsEvent, RunModCommandEvent, ServerAboutToStartEvent,
-    ServerHost, ServerStoppingEvent, ServerTickEvent, ServerTickPhase, Suggestion, TabCompleteEvent,
+    ServerHost, ServerStoppingEvent, ServerTickEvent, ServerTickPhase,
     Text,
 };
+use mod_api::Identifier;
 use mod_api::text::{TextClick, TextHover, TextStyle};
 use std::collections::HashMap;
 use std::path::Path;
@@ -38,6 +40,9 @@ struct Pending {
     since: Instant,
     answer: Option<Result<(), String>>,
 }
+
+/// Set while a granted command runs, so its own `player_command` is not granted again.
+static GRANTED_RUNNING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 static PENDING: Mutex<Option<HashMap<u128, Pending>>> = Mutex::new(None);
 
@@ -83,6 +88,54 @@ const HANDLER_ID: &str = "luckperms:permissions";
 #[derive(Default)]
 struct Mod;
 
+/// The command tree of `/lp` (see `command/tree.rs`), built once.
+fn tree() -> &'static crate::horizon_luckperms_core::command::tree::Tree {
+    static TREE: std::sync::OnceLock<crate::horizon_luckperms_core::command::tree::Tree> = std::sync::OnceLock::new();
+    TREE.get_or_init(crate::horizon_luckperms_core::command::tree::build)
+}
+
+/// The other roots `/lp` answers to, as aliases of every usage.
+fn with_aliases(mut command: Command) -> Command {
+    for root in ROOTS.iter().skip(1) {
+        command = command.alias(root);
+    }
+    command
+}
+
+/// The completion type of one place of the tree: the holder names and the tail of a leaf. It asks the port's own
+/// completion (`/lp` tab completion by position) with the command words in front of the typed text.
+struct LpArgument {
+    words: Vec<String>,
+    greedy: bool,
+}
+
+impl CommandArgumentType for LpArgument {
+    fn kind(&self) -> CommandArgumentKind {
+        if self.greedy { CommandArgumentKind::Greedy } else { CommandArgumentKind::Word }
+    }
+
+    fn parse(&self, input: &str) -> Result<String, CommandArgumentError> {
+        Ok(input.to_owned())
+    }
+
+    fn suggest(&self, sender: Option<&mod_api::CommandSender>, prefix: &str) -> Vec<CommandSuggestion> {
+        let (head, last) = match prefix.rfind(' ') {
+            Some(i) => (&prefix[..=i], &prefix[i + 1..]),
+            None => ("", prefix),
+        };
+        let mut args = self.words.clone();
+        args.extend(head.split(' ').filter(|w| !w.is_empty()).map(str::to_owned));
+        args.push(last.to_owned());
+        glue::complete_words(sender.map(|s| (s.uuid(), s.name())), &args)
+            .into_iter()
+            .map(|word| {
+                let suggestion = CommandSuggestion::new(word);
+                if head.is_empty() { suggestion } else { suggestion.replacing_from(head.len()) }
+            })
+            .collect()
+    }
+}
+
 /// The level name Paper's world contexts are built from (`server.properties` `level-name`).
 /// The file is read for that one key only; nothing is printed.
 fn level_name() -> String {
@@ -114,6 +167,34 @@ fn online(host: &dyn ServerHost) -> Vec<OnlinePlayer> {
         })
         .collect()
 }
+
+/// `resolve-command-selectors`: an `@...` word of a typed `/lp` line becomes the name of the one player it selects.
+fn resolve_selectors(host: &mut dyn ServerHost, player: u128, line: &str) -> String {
+    if !glue::resolve_selectors() || !line.contains('@') || !ROOTS_PREFIX_CHECK.iter().any(|r| line.trim_start_matches('/').split(' ').next() == Some(*r)) {
+        return line.to_owned();
+    }
+    let Some(sender) = host.player(player) else { return line.to_owned() };
+    let mut out = Vec::new();
+    for word in line.split(' ') {
+        if word.starts_with('@') {
+            if let Some(found) = sender.select_entities(host, word) {
+                let names: Vec<String> = found
+                    .into_iter()
+                    .filter_map(|e| host.players().server_players().into_iter().find(|p| p.entity() == e))
+                    .filter_map(|p| p.name(&*host))
+                    .collect();
+                if names.len() == 1 {
+                    out.push(names[0].clone());
+                    continue;
+                }
+            }
+        }
+        out.push(word.to_owned());
+    }
+    out.join(" ")
+}
+
+const ROOTS_PREFIX_CHECK: [&str; 6] = ["lp", "luckperms", "perm", "perms", "permission", "permissions"];
 
 fn color_name(code: char) -> &'static str {
     match code {
@@ -193,9 +274,17 @@ fn line_text(line: &str) -> Text {
     root
 }
 
+/// The one place the plugin-message send is called (the engine's `send_plugin_message` on the player handle).
+fn send_plugin_frame(host: &mut dyn ServerHost, player: &mod_api::PlayerRef, id: &Identifier, frame: &[u8]) {
+    let _ = player.send_plugin_message(&mut *host, id, frame);
+}
+
 #[mod_api::horizon_mod]
 impl Hooks for Mod {
-    fn server_about_to_start(&self, _: &mut dyn ServerHost, _: &mut ServerAboutToStartEvent) {
+    #[allow(unused_variables)]
+    fn server_about_to_start(&self, host: &mut dyn ServerHost, _: &mut ServerAboutToStartEvent) {
+        // The plugin channel the `messaging-service: pluginmsg` messenger runs on.
+        let _ = host.register_plugin_channel(&Identifier::parse(crate::horizon_luckperms_core::messenger_wave2::PLUGIN_CHANNEL).expect("a valid channel id"));
         // The core reads plugins/LuckPerms/config.yml when it exists (unchanged, never written), else
         // config/luckperms.toml (written with the defaults on first start, the password empty).
         glue::start(Path::new("config"), &level_name());
@@ -205,15 +294,81 @@ impl Hooks for Mod {
         glue::stop();
     }
 
+    fn plugin_message(&self, _: &mut dyn ServerHost, event: &mut mod_api::PluginMessageEvent<'_>) {
+        if event.channel.to_string() == crate::horizon_luckperms_core::messenger_wave2::PLUGIN_CHANNEL {
+            crate::horizon_luckperms_core::messenger_wave2::plugin_message_received(event.data);
+        }
+    }
+
     fn server_tick(&self, host: &mut dyn ServerHost, event: &mut ServerTickEvent<'_>) {
         // The horizon-rust port ran this at both phases; here once per tick, at the start.
         if !matches!(event.phase, ServerTickPhase::ServerTickStart { .. }) {
             return;
         }
+        // Frames of the pluginmsg messenger leave through a player; with nobody online they wait.
+        {
+            let frames = crate::horizon_luckperms_core::messenger_wave2::take_outgoing();
+            if !frames.is_empty() {
+                let carrier = online(&*host).first().map(|p| p.uuid);
+                match carrier.and_then(|u| host.player(u)) {
+                    Some(player) => {
+                        let id = Identifier::parse(crate::horizon_luckperms_core::messenger_wave2::PLUGIN_CHANNEL).expect("a valid channel id");
+                        for f in &frames {
+                            let _ = send_plugin_frame(host, &player, &id, f);
+                        }
+                    }
+                    None => crate::horizon_luckperms_core::messenger_wave2::requeue_outgoing(frames),
+                }
+            }
+        }
         static CALLS: AtomicU32 = AtomicU32::new(0);
         let n = CALLS.fetch_add(1, Ordering::Relaxed);
         // Every 10th tick the players go to the cache; every 40th the config files are looked at.
         let players = (n % 10 == 0).then(|| online(&*host));
+        // The groups go to the engine for the mods that read them (TAB, Vault-style callers): `permission_groups`.
+        if let Some(list) = &players {
+            for p in list {
+                let (prefix, suffix, group_meta) = glue::meta_of(p.uuid);
+                let groups = mod_api::PermissionGroups {
+                    primary: glue::primary_group(p.uuid),
+                    groups: glue::groups(p.uuid),
+                    prefix,
+                    suffix,
+                    group_meta: group_meta
+                        .into_iter()
+                        .map(|(group, prefix, suffix)| mod_api::GroupMeta { group, prefix, suffix })
+                        .collect(),
+                };
+                let _ = host.permission_set_groups(p.uuid, &groups);
+            }
+        }
+        // DiscordSRV's context calculator: its contexts for each player, when that mod runs (absent: nothing).
+        if let Some(list) = &players {
+            for p in list {
+                let pairs = host
+                    .commands()
+                    .call_mod_service("discordsrv:contexts", format!("{:032x}", p.uuid).as_bytes())
+                    .ok()
+                    .and_then(|r| String::from_utf8(r).ok())
+                    .map(|r| glue::parse_contexts(&r))
+                    .unwrap_or_default();
+                glue::external_contexts(p.uuid, pairs);
+            }
+        }
+        // `auto-op`: operator status follows the node `luckperms.autoop` (Bukkit's `setOp`).
+        if let Some(list) = &players {
+            if glue::auto_op() {
+                for p in list {
+                    let want = glue::permission(p.uuid, "luckperms.autoop") == Some(true);
+                    if want != (p.op_level > 0) {
+                        if let Some(handle) = host.player(p.uuid) {
+                            let level = if want { PermissionLevel::Owners } else { PermissionLevel::All };
+                            let _ = host.player_set_op_level(handle, level);
+                        }
+                    }
+                }
+            }
+        }
         if n % 40 == 0 {
             glue::check_config();
         }
@@ -237,6 +392,23 @@ impl Hooks for Mod {
         // again (arismoko's refresh is server-wide, not per player as native_resend_commands was).
         if out.resend_trees {
             host.commands().refresh_commands();
+        }
+        // `/lp verbose command`: each target runs its command as itself while the sender's listener records.
+        for job in out.verbose_jobs {
+            glue::verbose_job_start(&job);
+            if let Some(p) = host.player(job.target) {
+                let level = p.permission_level(&*host).unwrap_or(0);
+                let _ = p.entity().run_command_with_output(host, &job.command, PermissionLevel::from_level(i32::from(level)));
+            }
+            glue::verbose_job_done(&job);
+        }
+        // Granted commands: run as the player at the level the command needs.
+        for job in out.granted {
+            if let Some(p) = host.player(job.player) {
+                GRANTED_RUNNING.store(true, Ordering::Relaxed);
+                let _ = p.entity().run_command(host, &job.line, PermissionLevel::from_level(i32::from(job.level)));
+                GRANTED_RUNNING.store(false, Ordering::Relaxed);
+            }
         }
         // Queued console commands (not used by the core today, kept as in the port).
         for line in out.console_commands {
@@ -303,15 +475,37 @@ impl Hooks for Mod {
         glue::logout(event.player);
     }
 
+    fn register(&self, registrar: &mut dyn Registrar, _: &RegistrationContext) {
+        for tail in &tree().tails {
+            registrar.register_command_argument(&tail.id, LpArgument { words: tail.words.clone(), greedy: tail.greedy });
+        }
+    }
+
     fn register_commands(&self, _: &mut dyn ServerHost, event: &mut RegisterCommandsEvent<'_>) {
-        // Only one usage per root, with a free text argument: a console line then reaches run_mod_command
-        // whole. The port's per-word usages (for the client's completion) are not registered: arismoko would
-        // parse them into typed literals and arguments that cannot be turned back into the typed line.
-        // TODO(arismoko-api: command_raw_line): the typed line of a command, as the console or a player
-        // sent it, so per-word usages could be parsed without losing it. The console_line hook does not
-        // give it: it hears what the server logs, not the commands typed.
-        for root in ROOTS {
-            event.commands.push(Command::new(&format!("{root} [args:text]")));
+        // The whole tree of `/lp` (user|group|track|log and every main command, `command/tree.rs`) so the client
+        // lists the sub commands and their arguments and completes the names. The typed line of a player's /lp is
+        // still taken whole in `player_command`; the console reaches `run_mod_command` through the parsed tree and
+        // `rebuild` gives the line back. A leaf asks its `luckperms.*` node (`register_node_commands`); the traversal
+        // prefixes stay operator level.
+        for usage in tree().usages.iter().filter(|u| u.node.is_none()) {
+            event.commands.push(with_aliases(Command::op(&usage.usage, 2)));
+        }
+    }
+
+    fn register_node_commands(&self, _: &mut dyn ServerHost, event: &mut RegisterNodeCommandsEvent<'_>) {
+        for usage in tree().usages.iter() {
+            if let Some(node) = &usage.node {
+                event.commands.push(with_aliases(Command::op(&usage.usage, 2)).with_node(&PermissionNode::new(node, PermissionValueType::Boolean)));
+            }
+        }
+    }
+
+    fn permission_gather_nodes(&self, event: &mut PermissionGatherNodesEvent<'_>) {
+        // The nodes the tree asks (`luckperms.user.permission.set`, ...), operator level as Bukkit's `default: op`.
+        for usage in tree().usages.iter() {
+            if let Some(node) = &usage.node {
+                let _ = event.nodes.add(PermissionNode::new(node, PermissionValueType::Boolean), NodeDefault::Level(PermissionLevel::from_level(2)));
+            }
         }
     }
 
@@ -324,14 +518,20 @@ impl Hooks for Mod {
             }
             _ => None,
         };
-        let Some(root) = event.command.literals.first() else {
+        if event.command.literals.is_empty() {
             return Flow::Continue;
-        };
-        let rest = match event.command.argument("args") {
-            Some(CommandArgumentValue::String(s)) => s.as_str(),
-            _ => "",
-        };
-        let line = if rest.is_empty() { root.clone() } else { format!("{root} {rest}") };
+        }
+        let values: Vec<(String, String)> = event
+            .command
+            .arguments
+            .iter()
+            .filter_map(|a| match &a.value {
+                CommandArgumentValue::String(s) => Some((a.name.clone(), s.clone())),
+                CommandArgumentValue::Custom { value, .. } => Some((a.name.clone(), value.clone())),
+                _ => None,
+            })
+            .collect();
+        let line = crate::horizon_luckperms_core::command::tree::rebuild(&tree().usages, &event.command.literals, &values);
         let sent = match &sender {
             Some((uuid, name)) => glue::lp_command(Some((*uuid, name.as_str())), &line),
             None => glue::lp_command(None, &line),
@@ -344,7 +544,7 @@ impl Hooks for Mod {
         // list, since the list may leave them out while the server is busy with this command.
         let players = online(&*host);
         if players.iter().any(|p| p.uuid == event.player) {
-            glue::players(players);
+            glue::players(players.clone());
         }
         // A typed command whose node minecraft.command.<name> is false is refused, with the answer as a reply.
         // The level argument is not used by the core's gate.
@@ -352,26 +552,54 @@ impl Hooks for Mod {
             event.replies.push(line_text(&line));
             return Flow::Cancel;
         }
-        // TODO(arismoko-api: player_command_level): a granted vanilla command (minecraft.command.<name> true) does not
-        // run at the level it needs for a non-operator; the port lifted the level here. Refusals still work.
-        // (`Command::with_node` covers only commands a mod registers, not vanilla roots.)
+        // A command a node grants above the player's level (`minecraft.command.<name>` true) is cancelled here and
+        // run again from the next tick at the level it needs, as the player (their own feedback).
+        let level = players.iter().find(|p| p.uuid == event.player).map_or(0, |p| p.op_level);
+        if !GRANTED_RUNNING.load(Ordering::Relaxed) && glue::queue_granted(event.player, event.command, level) {
+            return Flow::Cancel;
+        }
         // /lp: the core answers later, through the tick.
-        if glue::lp_command(Some((event.player, event.name)), event.command) {
+        let resolved = resolve_selectors(host, event.player, event.command);
+        if glue::lp_command(Some((event.player, event.name)), &resolved) {
             return Flow::Cancel;
         }
         Flow::Continue
     }
 
     fn player_commands_sent(&self, _: &mut dyn ServerHost, event: &mut PlayerCommandsSentEvent<'_>) {
-        // Refused roots leave the player's tree. TODO(arismoko-api: command_node): the roots the
-        // level hides cannot be put back for a granted node (the port's names_hidden), so a granted
-        // vanilla command of a non-operator stays out of the tree. `Command::with_node` is real now,
-        // but only for roots a mod registers.
+        // Refused roots leave the player's tree.
         glue::filter_tree(event.player, event.names);
+    }
+
+    fn player_commands_sent_restore(&self, _: &mut dyn ServerHost, event: &mut PlayerCommandsSentRestoreEvent<'_>) {
+        // A root the player's level hides but a node grants (`minecraft.command.<name>` true) goes back into
+        // the tree the client is shown, so it completes and highlights; the run is answered in `player_command`.
+        glue::unhide_granted(event.player, event.restore, event.hidden);
+    }
+
+    fn mod_service_call(&self, _: &mut dyn ServerHost, event: &mut ModServiceCallEvent<'_>) -> Option<mod_api::PayloadBytes> {
+        let text = std::str::from_utf8(&event.payload.0).ok()?;
+        let reply = match event.service {
+            "luckperms:placeholder" => glue::placeholder(text),
+            // The Vault provider (`LuckPermsVaultPermission` and `LuckPermsVaultChat`): see core/vault.rs.
+            s @ (crate::horizon_luckperms_core::vault::PERMISSION_SERVICE | crate::horizon_luckperms_core::vault::CHAT_SERVICE) => {
+                crate::horizon_luckperms_core::vault::service(s, text)
+            }
+            _ => None,
+        };
+        reply.map(|v| mod_api::PayloadBytes(v.into_bytes()))
     }
 
     fn permission_gather_handler(&self, _: &mut dyn ServerHost, event: &mut PermissionGatherHandlerEvent<'_>) {
         event.handlers.push(HANDLER_ID.to_owned());
+    }
+
+    // The provider answers a group write another mod asked for (`permission_group_add`/`remove`).
+    fn permission_group_write(&self, _: &mut dyn ServerHost, event: &mut mod_api::PermissionGroupWriteEvent<'_>) -> Option<bool> {
+        if event.handler != HANDLER_ID {
+            return None;
+        }
+        Some(glue::group_write(event.uuid, event.group, event.add))
     }
 
     fn permission_handler_query(
@@ -391,35 +619,19 @@ impl Hooks for Mod {
             .and_then(|u| host.player(u))
             .and_then(|p| p.permission_level(&*host))
             .unwrap_or(0);
-        // With the engine's declared default (feature `horizon_handler_default`), a node nobody set falls back to
-        // what the mod that owns it declared, as Paper falls back to plugin.yml.
-        #[cfg(feature = "horizon_handler_default")]
-        let answer = {
-            let declared = match event.default {
-                mod_api::NodeDefault::Level(l) => glue::DeclaredDefault::Level(l.level()),
-                mod_api::NodeDefault::Value(mod_api::PermissionValue::Boolean(true)) => glue::DeclaredDefault::Everyone,
-                mod_api::NodeDefault::Value(_) => glue::DeclaredDefault::Nobody,
-                _ => glue::DeclaredDefault::Level(1),
-            };
-            glue::handler_answer_declared(event.uuid, &event.node.name, event.online.is_some(), level, declared)
+        // A node nobody set falls back to what the mod that owns it declared, as Paper falls back to plugin.yml.
+        let declared = match event.default {
+            mod_api::NodeDefault::Level(l) => glue::DeclaredDefault::Level(l.level()),
+            mod_api::NodeDefault::Value(mod_api::PermissionValue::Boolean(true)) => glue::DeclaredDefault::Everyone,
+            mod_api::NodeDefault::Nobody | mod_api::NodeDefault::Value(_) => glue::DeclaredDefault::Nobody,
         };
-        #[cfg(not(feature = "horizon_handler_default"))]
-        let answer = glue::handler_answer(event.uuid, &event.node.name, event.online.is_some(), level);
+        let answer =
+            glue::handler_answer_declared(event.uuid, &event.node.name, event.online.is_some(), level, declared);
         Some(match answer {
             Some(b) => Ok(PermissionValue::Boolean(b)),
             None if event.online.is_some() => Err(PermissionError::NotInitialized),
             None => Err(PermissionError::UnknownPlayer),
         })
-    }
-
-    fn tab_complete(&self, _: &mut dyn ServerHost, event: &mut TabCompleteEvent<'_>) {
-        let Some((start, words)) = glue::complete(event.player, event.name, event.command) else {
-            return;
-        };
-        let end = event.command.len();
-        for word in words {
-            event.suggestions.push(Suggestion::new((start, end), word));
-        }
     }
 }
 
