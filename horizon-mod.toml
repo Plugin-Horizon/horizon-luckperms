@@ -1,6 +1,6 @@
 id = "luckperms"
 name = "LuckPerms"
-version = "0.1.0"
+version = "1.001.0"
 description = "Unofficial LuckPerms port: permissions, groups and prefixes from LuckPerms' own MariaDB tables and SQL messaging."
 authors = ["LionSpacer"]
 api = "0.2"
