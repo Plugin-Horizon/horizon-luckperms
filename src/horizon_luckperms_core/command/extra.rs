@@ -2,7 +2,7 @@
 
 use super::args::Args;
 use super::fmt::{aq, dred, green};
-use super::{Ctx, Holder, LABEL};
+use super::{Ctx, Holder};
 use crate::horizon_luckperms_core::bytebin;
 use crate::horizon_luckperms_core::context::ContextSet;
 use crate::horizon_luckperms_core::known;
@@ -56,7 +56,39 @@ pub(crate) fn verbose(c: &mut Ctx<'_>, a: Args) {
     let sender = (c.sender.uuid, c.sender.name.clone(), c.sender.console);
     match mode.as_str() {
         "command" | "cmd" => {
-            c.msg("\u{a7}cThe verbose command mode is not available on Horizon: turn verbose on, run the command, then turn it off.");
+            if a.len() < 3 {
+                c.detailed_usage("Verbose", "verbose");
+                return;
+            }
+            let name = a.get(1);
+            let lower = name.to_lowercase();
+            let target = if lower == "me" || lower == "self" || lower == c.sender.name.to_lowercase() {
+                if c.sender.console {
+                    c.detailed_usage("Verbose", "verbose");
+                    return;
+                }
+                (c.sender.uuid, c.sender.name.clone())
+            } else {
+                if !c.has("verbose.command.others") {
+                    c.no_permission();
+                    return;
+                }
+                match c.rt.online_players().into_iter().find(|p| p.name.eq_ignore_ascii_case(&name)) {
+                    Some(p) => (p.uuid, p.name),
+                    None => {
+                        c.bad(lang::T_COMMAND_MISC_LOADING_ERROR_USER_NOT_ONLINE, &[dred(&name)]);
+                        return;
+                    }
+                }
+            };
+            let joined = (2..a.len()).map(|i| a.get(i)).collect::<Vec<_>>().join(" ");
+            let command = joined.strip_prefix('/').unwrap_or(&joined).to_owned();
+            c.msg(format!("{}.", tr(lang::T_COMMAND_VERBOSE_COMMAND_EXEC, 'b', &[green(&target.1), green(&command)])));
+            c.rt.queue_verbose_job(crate::horizon_luckperms_core::runtime::VerboseJob {
+                sender: c.sender.clone(),
+                target: target.0,
+                command,
+            });
         }
         "on" | "true" | "record" => {
             let filter = (1..a.len()).map(|i| a.get(i)).collect::<Vec<_>>().join(" ");
@@ -90,6 +122,73 @@ pub(crate) fn verbose(c: &mut Ctx<'_>, a: Args) {
         }
         _ => c.detailed_usage("Verbose", "verbose"),
     }
+}
+
+/// The lines after a forced command ran (`VERBOSE_OFF_COMMAND`, `VERBOSE_OFF_COMMAND_NO_CHECKS`).
+pub fn verbose_done_lines(matched: usize) -> Vec<String> {
+    use crate::horizon_luckperms_core::text::prefixed;
+    if matched == 0 {
+        vec![
+            prefixed(tr(lang::T_COMMAND_VERBOSE_COMMAND_NO_CHECKS, 'c', &[])),
+            prefixed(tr(lang::T_COMMAND_VERBOSE_COMMAND_POSSIBLY_ASYNC, '7', &[])),
+            prefixed(tr(lang::T_COMMAND_VERBOSE_COMMAND_TRY_AGAIN_MANUALLY, '7', &[])),
+        ]
+    } else {
+        vec![prefixed(format!("{}.", tr(lang::T_COMMAND_VERBOSE_COMMAND_EXEC_COMPLETE, 'b', &[])))]
+    }
+}
+
+// ---- translations -------------------------------------------------------------------------------
+
+/// `/lp translations [install]` (`TranslationsCommand`)
+pub(crate) fn translations(c: &mut Ctx<'_>, a: Args) {
+    use crate::horizon_luckperms_core::translations as tl;
+    c.msg(format!("{}", tr(lang::T_COMMAND_TRANSLATIONS_SEARCHING, 'b', &[])));
+    let languages = match tl::with_service(tl::available) {
+        Ok(l) => l,
+        Err(why) => {
+            c.msg(tr(lang::T_COMMAND_TRANSLATIONS_SEARCHING_ERROR, 'c', &[]));
+            eprintln!("[LuckPerms] Unable to obtain a list of available translations: {why}");
+            return;
+        }
+    };
+    if a.len() >= 1 && a.get(0).eq_ignore_ascii_case("install") {
+        c.msg(tr(lang::T_COMMAND_TRANSLATIONS_INSTALLING, 'b', &[]));
+        let mut lines: Vec<String> = Vec::new();
+        tl::with_service(|client| {
+            tl::install(client, &languages, |lang, starting| {
+                let t = if starting { lang::T_COMMAND_TRANSLATIONS_INSTALLING_SPECIFIC } else { lang::T_COMMAND_TRANSLATIONS_DOWNLOAD_ERROR };
+                lines.push(format!("{}", tr(t, if starting { 'b' } else { 'c' }, &[green(&lang.locale)])));
+            })
+        });
+        for l in lines {
+            c.msg(l);
+        }
+        let locale = std::env::var("LUCKPERMS_LOCALE").unwrap_or_else(|_| c.cfg.horizon.locale.clone());
+        tl::load(&locale);
+        c.msg(tr(lang::T_COMMAND_TRANSLATIONS_INSTALL_COMPLETE, 'b', &[]));
+        return;
+    }
+    c.msg(format!("{}: {}", tr(lang::T_COMMAND_TRANSLATIONS_INSTALLED_TRANSLATIONS, 'b', &[]), super::fmt::string_list(&tl::installed())));
+    c.msg(format!("{}:", tr(lang::T_COMMAND_TRANSLATIONS_AVAILABLE_TRANSLATIONS, 'b', &[])));
+    let mut sorted = languages;
+    sorted.sort_by(|x, y| x.locale.cmp(&y.locale));
+    for l in sorted {
+        let by = if l.contributors.is_empty() {
+            String::new()
+        } else {
+            format!(" {} \u{a7}7{}", tr(lang::T_COMMAND_TRANSLATIONS_TRANSLATIONS_BY, '3', &[]), l.contributors.join(", "))
+        };
+        c.raw(format!(
+            "\u{a7}3> \u{a7}b{} \u{a7}3- \u{a7}f{} \u{a7}3({}){by}",
+            l.locale,
+            l.name,
+            tr(lang::T_COMMAND_TRANSLATIONS_PERCENT_TRANSLATED, '3', &[format!("\u{a7}b{}", l.progress)])
+        ));
+    }
+    c.raw(String::new());
+    c.msg(format!("{}.", tr(lang::T_COMMAND_TRANSLATIONS_DOWNLOAD_PROMPT, 'b', &[green(&format!("/{} translations install", super::label()))])));
+    c.msg(tr(lang::T_COMMAND_TRANSLATIONS_DOWNLOAD_OVERRIDE_WARNING, 'c', &[]));
 }
 
 // ---- tree ---------------------------------------------------------------------------------------
@@ -530,7 +629,7 @@ pub(crate) fn bulkupdate(c: &mut Ctx<'_>, a: Args) {
     let readable = op.readable();
     pending(|m| m.insert(id.clone(), (op, Instant::now())));
     c.msg(format!("{}. \u{a7}7(\u{a7}f{readable}\u{a7}7)", tr(lang::T_COMMAND_BULKUPDATE_QUEUED, 'a', &[])));
-    c.msg(format!("{}.", tr(lang::T_COMMAND_BULKUPDATE_CONFIRM, 'a', &[aq(&format!("/{LABEL} bulkupdate confirm {id}"))])));
+    c.msg(format!("{}.", tr(lang::T_COMMAND_BULKUPDATE_CONFIRM, 'a', &[aq(&format!("/{} bulkupdate confirm {id}", super::label()))])));
 }
 
 #[cfg(test)]

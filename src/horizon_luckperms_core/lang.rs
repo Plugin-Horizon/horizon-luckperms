@@ -697,6 +697,8 @@ pub fn usage_text(key: &str) -> &'static str {
 /// Fills `{0}`, `{1}` ... of a template. The text starts in colour `base` (a legacy code letter) and returns to it after
 /// every argument, as a component's arguments keep their own style while the rest of the text keeps the parent's.
 pub fn tr(template: &str, base: char, args: &[String]) -> String {
+    let translated = crate::horizon_luckperms_core::translations::lookup(template);
+    let template = translated.as_deref().unwrap_or(template);
     let mut out = String::new();
     out.push('\u{a7}');
     out.push(base);

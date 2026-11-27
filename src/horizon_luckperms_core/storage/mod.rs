@@ -1,13 +1,25 @@
-//! Storage: LuckPerms' SQL schema (`sql.rs`, MariaDB/MySQL) and an in-memory stand-in with
-//! the same behaviour for tests.
+//! Storage: LuckPerms' SQL schema (`sql.rs` for MariaDB/MySQL, `sqlite.rs`), its flat-file storages
+//! (`file.rs`: YAML, JSON, HOCON and TOML, one file per holder or one per kind), split storage
+//! (`split.rs`) and an in-memory stand-in with the same behaviour for tests.
 
 use crate::horizon_luckperms_core::actionlog::{Action, TargetType};
 use crate::horizon_luckperms_core::model::{Group, Track, User, DEFAULT_GROUP};
 use crate::horizon_luckperms_core::node::{Equality, Node};
 use std::collections::{BTreeMap, HashMap};
 
+pub mod factory;
+pub mod file;
+pub mod formats;
+mod rows;
+#[cfg(feature = "net")]
+pub mod rest;
+pub mod mongo;
+pub mod postgres;
+pub mod split;
 #[cfg(feature = "mysql")]
 pub mod sql;
+#[cfg(feature = "sqlite")]
+pub mod sqlite;
 
 pub type Result<T> = std::result::Result<T, String>;
 
@@ -145,6 +157,11 @@ pub trait Storage: Send {
                     .collect())
             }
         }
+    }
+    /// Whether this storage can carry the SQL messenger (a MariaDB/MySQL database); file storages and SQLite
+    /// cannot (LuckPerms: "Can't find a supported sql storage implementation").
+    fn sql_messenger(&self) -> bool {
+        true
     }
     /// The `{prefix}messenger` table: its newest id at start.
     fn messenger_init(&mut self) -> Result<i64>;

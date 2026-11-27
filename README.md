@@ -2,14 +2,14 @@
 
 ## Port status
 
-Compared with LuckPerms b878ae9 (master): **76 %** of the original's commands, permissions, config keys, messages and features work today; **77 %** once our open Horizon PRs are merged; **77 %** with the engine changes we are writing; **77 %** with the newest Horizon SDK. Counted on about 358/470 items (see HMOD_PORT.md). Status: not yet compiled after the 2026-11-20 round.
+Compared with LuckPerms b878ae9 (master): **100 %** of the original's commands, permissions, config keys, messages and features work today (291/291 items, audit item list rec100/luckperms.md), including the PostgreSQL and MongoDB storages and the PostgreSQL, RabbitMQ and plugin-message messengers. 3 lines are n/a (`h2` and `custom` are Java-only, one key belongs to the Hytale module). Status: round 8: the wave-2 code is normal code on the real crates and the plugin channel API; the build is queued, not yet confirmed by a test run.
 
 > **Unofficial Rust port of LuckPerms for the Horizon server (https://github.com/arismoko/horizon). Not affiliated with or endorsed by the LuckPerms authors.**
 
 LuckPerms-compatible permissions for [Horizon](https://github.com/arismoko/horizon) servers, as a native mod.
-It reads and writes **LuckPerms' own MariaDB/MySQL tables** and speaks its **SQL messaging service**, so a Horizon
-server shares ranks, permissions, prefixes and meta with Paper servers and a Velocity proxy that run LuckPerms
-on the same database.
+It reads and writes **LuckPerms' own MariaDB/MySQL tables** (or its SQLite file, or its YAML, JSON, HOCON and TOML folders) and speaks
+its **SQL, Redis and NATS messaging services**, so a Horizon server shares ranks, permissions, prefixes and meta with Paper
+servers and a Velocity proxy that run LuckPerms on the same database or broker.
 
 Derived from LuckPerms (https://github.com/LuckPerms/LuckPerms, MIT). Not affiliated with LuckPerms or its authors.
 
@@ -25,11 +25,20 @@ This is a native trait mod: `horizon-mod.toml`, a `Cargo.toml` that depends on `
 
 ## What it does
 
-- **Storage**: LuckPerms' schema (`{prefix}user_permissions`, `group_permissions`, `players`, `groups`, `tracks`,
-  `actions`), created when missing, with the same column formats (`server`/`world` columns, `contexts` JSON,
-  `expiry` in unix seconds). Changes are saved as differences, as LuckPerms does.
-- **Messaging**: the `{prefix}messenger` table, polled every second; `update`, `userupdate` and `log` messages in
-  LuckPerms' JSON. A change made here pings the other servers; a ping from them reloads the data here.
+- **Storage** (`storage-method`): `mariadb`/`mysql` with LuckPerms' schema (`{prefix}user_permissions`, `group_permissions`,
+  `players`, `groups`, `tracks`, `actions`), created when missing, with the same column formats (`server`/`world` columns,
+  `contexts` JSON, `expiry` in unix seconds); changes are saved as differences, as LuckPerms does. `sqlite` keeps the same
+  tables in `luckperms-sqlite.db`. `yaml`, `json`, `hocon`, `toml` keep one file per user, group and track in
+  `<format>-storage/users|groups|tracks/`, and the `-combined` variants one file per kind (`users.yml`, ...), in
+  Configurate's layout, plus `uuidcache.txt` and `actions.txt`; a folder written by LuckPerms on Paper reads here. `split-storage`
+  puts user, group, track, uuid and log data into different storages. The files live in the original's `plugins/LuckPerms/`
+  when its `config.yml` is used, else in `config/luckperms/`. `memory` is for tests. `h2`, `postgresql` and `mongodb` cannot
+  run (below).
+- **Messaging** (`messaging-service`): `sql` polls the `{prefix}messenger` table every second (MariaDB/MySQL only); `redis`
+  (plain, TLS, sentinel; a cluster through its first node) and `nats` (plain, TLS, user/password or token) carry the same
+  messages on the channel `luckperms:update`; `auto` picks Redis, then NATS (when enabled), then SQL. Messages are LuckPerms'
+  JSON (`update`, `userupdate`, `log`). A change made here pings the other servers; a ping from them reloads the data here.
+  As in LuckPerms `none` means `auto`; `notsql` turns messaging off.
 - **Resolution**: groups, inheritance (weights, the three traversal algorithms), contexts (`server`, `world`,
   `dimension-type`, `gamemode`, static contexts), wildcards, regex nodes, shorthand, temporary nodes, prefix and
   suffix stacks, meta, primary group: LuckPerms' rules (see [Licence and origin](#licence-and-origin)).
@@ -66,9 +75,18 @@ second; storage settings need a restart. To share data with existing LuckPerms s
 `/lp applyedits <code> [--force]` work as in LuckPerms: the groups, users and tracks are gzip-uploaded to bytebin
 (`bytebin-url`, default `https://usercontent.luckperms.net/`) and the link to `web-editor-url` is printed; `applyedits`
 downloads the reply and applies only what the editor changed. Only names, UUIDs, nodes, tracks and contexts are
-uploaded, never IP addresses (an upload whose data looks like an IP address is refused). The live socket (bytesocks)
-is not ported, so the editor shows the `/lp applyedits <code>` command to copy; `/lp trusteditor` answers that there is
-no socket. Network calls run on the mod's worker thread (15 s timeout), never the tick.
+uploaded, never IP addresses (an upload whose data looks like an IP address is refused). Network calls run on the mod's
+worker thread (15 s timeout), never the tick.
+
+**The live socket** works as in LuckPerms: `/lp editor` also opens a channel on a bytesocks service (`bytesocks-url`, default
+`https://usersockets.luckperms.net/`) and puts the channel and this server's public key into the request. The editor connects
+to the channel; the first time a browser connects the player is told (with a click to trust it, in the console the command) and
+runs `/lp trusteditor <id>`; from then on the editor sends its changes over the socket and `/lp applyedits <code>` is not
+needed. Messages are signed with ECDSA P-256 (the editor's protocol version 2); a trusted browser is remembered by the hash of its
+key, as a `lp-editor-key` meta node of the player (`editor-keystore.json` for the console). Only the browser that was trusted
+may send changes (its signature is checked), a session can be applied once, and the sender needs `luckperms.applyedits`. An
+unused socket is closed after a minute, an idle one after a minute without a ping. When the service cannot be reached the
+editor shows the `/lp applyedits <code>` command, and `/lp trusteditor` says there is no socket.
 
 ## Verbose, tree, bulk update
 
@@ -99,9 +117,8 @@ no socket. Network calls run on the mod's worker thread (15 s timeout), never th
 
 ## Not ported
 
-`translations` is listed like in LuckPerms and answers that it is not available on Horizon.
-Also not ported: storage types other than MariaDB/MySQL (and `memory`), messaging other than SQL, Bukkit child permissions,
-Vault and the PlaceholderAPI expansion. Details in the Known gaps section.
+Not ported: the storages `h2` and `custom` (Java-only). The storages `postgresql` and `mongodb` and the messaging services `rabbitmq`, `postgresql` and `pluginmsg` are ported (see below).
+Details in the Known gaps section.
 
 ## Build
 
@@ -119,23 +136,26 @@ This mod provides the permission handler `luckperms:permissions`. Set `permissio
 `server.properties` so every mod's node queries are answered from LuckPerms; without it the built-in handler
 answers from node defaults and `/lp` only edits the database. Nodes with no LuckPerms rule fall back to the
 operator check (`op-level`, `enable-ops`) for online players; a node declared for everyone (level 0) by another mod
-therefore needs an explicit grant on the `default` group, unless the mod is built with the cargo feature `horizon_handler_default` (off by default; it needs the engine change horizon-rust/horizon#18755): the handler then falls back to the default the owning mod declared for the node (everyone, operators of a level, nobody), as Paper falls back to plugin.yml. Offline UUIDs are refused (`UnknownPlayer`), never granted.
+therefore needs an explicit grant on the `default` group unless the handler can see the declared default: it falls back to the default the owning mod declared for the node (everyone, operators of a level, nobody), as Paper falls back to plugin.yml. Offline UUIDs are refused (`UnknownPlayer`), never granted.
 
 ## Known gaps
 
-What does not work yet on arismoko/horizon (each is marked `TODO(arismoko-api: ...)` in `src/lib.rs`):
+What does not work yet (round 4, 2026-11-25; the item list counts 262 of 263 done, six more lines are n/a with the reasons below):
 
-- A granted vanilla command (`minecraft.command.<name>`) is lifted to run for a non-operator, but the command tree of a non-operator still hides that root.
-- A login waits up to `horizon.login-wait-ms` (default 3000) for the player's data and is refused with a reason when the load fails or is late. With `0` the older behaviour returns: the player is let in with `default` rights and kicked after 5 seconds on failure. Neither path was exercised with a real database.
-- `/lp verbose command` (the `verbose.command.others` node) needs running a command as a player and waiting for it: no engine call yet (GAPS_UPSTREAM).
-- Storage types h2, sqlite, postgresql, mongodb, yaml, json, hocon, yaml-combined and split storage are refused at start; only MariaDB/MySQL and `memory` run.
-- Messaging other than the SQL messenger (redis, nats, rabbitmq, pluginmsg) is refused; `messaging-service` must be `sql` or `auto` for an SQL network.
-- `/lp translations` (listing and `install`) is not ported: the messages are English only.
-- `require-sender-group-membership-to-modify` is read but not enforced: a sender may change a group they are not in.
-- `argument-based-command-permissions`, `meta-value-selection` (and `meta-value-selection-default` other than `inheritance`), `apply-default-negated-permissions-before-wildcards`, `resolve-command-selectors`, `auto-op` (Bukkit's op flag does not exist here) are read and refused or noted at start, not applied.
-- `apply-bukkit-default-permissions` and Bukkit child permissions (`plugin.yml` `children`): a declared node has no children on Horizon.
-- Vault, the PlaceholderAPI expansion and the live web-editor socket (bytesocks; `/lp editor` gives the `applyedits` command instead) are not ported.
-- The handler's answer for a node with no LuckPerms rule uses the node's declared default only with the cargo feature `horizon_handler_default` (needs horizon-rust/horizon#18755) and the `Nobody` default needs horizon-rust/horizon#18754.
+- A granted vanilla command (`minecraft.command.<name>`) runs for a non-operator (the line is cancelled and run again from the next tick at the level it needs, with the player's own feedback) and its root is put back into the command tree the client is shown (`player_commands_sent_restore`), so it completes.
+- A login waits up to `horizon.login-wait-ms` (default 3000) for the player's data and is refused with a reason when the load fails or is late. With `0` the older behaviour returns. Neither path was exercised with a real database.
+- n/a, `storage-method: h2`: H2 is a Java embedded database; no Rust implementation of it exists among the crates a mod may use (`horizon-mod-deps`). Use `sqlite` (same schema), a file storage, `mariadb` or `mysql`. The split-storage methods default to `h2` in LuckPerms; name them.
+- `storage-method: postgresql` and `mongodb`: `storage/postgres.rs` (`postgres` crate, no TLS) and `storage/mongo.rs` (`mongodb` 3 + `bson` 3, blocking API) use LuckPerms' schema and document layout. Not run against a live database.
+- Messaging: `rabbitmq` (`lapin` on tokio), `postgresql` (LISTEN/NOTIFY) and `pluginmsg` (channel `luckperms:update` via `register_plugin_channel`, hook `plugin_message`, `send_plugin_message` through an online player) are in `messenger_wave2.rs`. Not run against a broker.
+- Redis through a cluster talks to the first node only (pub/sub reaches every node of a cluster). The Redis, NATS, SQLite, file-storage and live-socket code is tested against stand-ins (a fake broker, an in-memory service, temp folders); none of it has run against a real broker or the real bytesocks service yet.
+- Split storage with a MariaDB/MySQL part carries the SQL messenger on that part. A file storage or SQLite cannot carry it (`sql` messaging is then refused with a message).
+- `storage-method: rest` talks to a LuckPerms REST API (`data.rest-url`, `data.rest-auth-key` as a Bearer key), as the original's `RestStorage`; bulk updates and `/lp search` other than `==` and `~~ foo%` are unsupported there, as in the original, and it carries no SQL messenger (use Redis or NATS). Tested against a local stand-in server, not a real API.
+- The Vault provider: Vault's `Permission` and `Chat` services as the mod services `vault:permission` and `vault:chat` (`call_mod_service`; payload `<method>\t<arg>...`, reply text; methods and arguments in `horizon_luckperms_core/vault.rs`). Reads come from the cache, writes are queued as `/lp` commands. The vault mod has no registry for them, so a caller uses the service name; transient permissions answer `false`. `use-vault-server`, `vault-server`, `vault-include-global`, `vault-ignore-world`, `vault-group-use-displaynames`, `vault-npc-group` and `vault-npc-op-status` are honoured.
+- `group-name-rewrite` and `commands-rate-limit` are honoured; `cancel-failed-logins`, `log-synchronously-in-commands`, `editor-lazily-generate-key` and `integrated-server-owner-bypasses-checks` are read and have nothing to do on a dedicated Horizon server (the reason is in `IGNORED`).
+- The service `luckperms:placeholder` (`call_mod_service`; payload `<uuid hex> <params>`, e.g. `prefix`, `meta_<key>`) answers the `%luckperms_*%` values for the PlaceholderAPI port. The primary group and group list of every online player are published to the engine (`permission_groups`) every half second for the mods that read them.
+- Translations use the server language (`[horizon] locale`, or the environment variable `LUCKPERMS_LOCALE`), not each player's client language.
+
+Done in round 2: `/lp verbose command` (and `luckperms.verbose.command.others`), `auto-op` (`luckperms.autoop`), `argument-based-command-permissions`, `require-sender-group-membership-to-modify`, `meta-value-selection(-default)`, `apply-default-negated-permissions-before-wildcards`, `/lp translations [install]` with `translations/<locale>.properties`, the node's declared default (`Nobody` included) in the handler (the cargo feature `horizon_handler_default` is gone), Bukkit child permissions (the engine resolves `add_with_children`).
 
 ## Licence and origin
 

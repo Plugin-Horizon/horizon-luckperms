@@ -98,6 +98,21 @@ pub fn groups(player: u128) -> Vec<String> {
     rt.resolved(player, &ctx, false).groups.clone()
 }
 
+/// The prefix and suffix of each of the player's groups that has one: (group, prefix, suffix), in the order of
+/// `groups` (Vault's `getGroupPrefix`/`getGroupSuffix`; empty values are left out).
+pub fn group_meta(player: u128) -> Vec<(String, Option<String>, Option<String>)> {
+    let Some(rt) = runtime::get() else { return Vec::new() };
+    let v = crate::horizon_luckperms_core::vault::Vault::new(&rt);
+    groups(player)
+        .into_iter()
+        .filter_map(|g| {
+            let non_empty = |s: Option<String>| s.filter(|x| !x.is_empty());
+            let (p, x) = (non_empty(v.group_prefix(None, &g)), non_empty(v.group_suffix(None, &g)));
+            (p.is_some() || x.is_some()).then_some((g, p, x))
+        })
+        .collect()
+}
+
 pub fn in_group(player: u128, group: &str) -> bool {
     groups(player).iter().any(|g| g.eq_ignore_ascii_case(group))
 }

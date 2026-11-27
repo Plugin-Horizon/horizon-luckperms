@@ -18,11 +18,35 @@ mysql = { version = "28", default-features = false, features = ["minimal-rust", 
 ureq = { version = "2", default-features = false, features = ["tls"], optional = true }
 flate2 = { version = "1", default-features = false, features = ["rust_backend"], optional = true }
 
+# Redis messaging (pub/sub, TLS, sentinel); the same crate and features husksync uses.
+redis = { version = "1", default-features = false, features = ["tls-rustls", "sentinel"], optional = true }
+# The SQLite storage (SQLite compiled into the mod, as clearlag-cr and huskhomes do).
+rusqlite = { version = "=0.41.1", default-features = false, features = ["bundled", "cache"], optional = true }
+# The web editor's live socket and the NATS messenger: websocket, TLS, the editor's ECDSA keys (as discordsrv and floodgate).
+tungstenite = { version = "0.30", default-features = false, optional = true }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "logging", "tls12"], optional = true }
+webpki-roots = { version = "0.26", optional = true }
+sha1 = { version = "0.10", optional = true }
+base64 = { version = "0.22", optional = true }
+ring = { version = "0.17", optional = true }
+
+# Wave-2 clients of horizon-mod-deps (same versions and features): the PostgreSQL and MongoDB storages, the PostgreSQL
+# (LISTEN/NOTIFY) and RabbitMQ messengers. tokio drives lapin from the messenger's own thread.
+postgres = { version = "0.19", default-features = false, features = ["with-chrono-0_4"], optional = true }
+mongodb = { version = "3", default-features = false, features = ["sync", "rustls-tls", "bson-3", "compat-3-3-0"], optional = true }
+bson = { version = "3", default-features = false, optional = true }
+lapin = { version = "4", default-features = false, features = ["tokio", "rustls--ring"], optional = true }
+tokio = { version = "1", default-features = false, features = ["rt", "rt-multi-thread", "time", "sync"], optional = true }
 
 [features]
-default = ["mysql", "net"]
+default = ["mysql", "net", "redis", "sqlite", "wire", "postgres", "mongodb", "amqp"]
+postgres = ["dep:postgres"]
+mongodb = ["dep:mongodb", "dep:bson"]
+amqp = ["dep:lapin", "dep:tokio"]
 mysql = ["dep:mysql"]
+redis = ["dep:redis"]
+sqlite = ["dep:rusqlite"]
+# The web editor's live socket (`/lp trusteditor`) and the NATS messenger.
+wire = ["net", "dep:tungstenite", "dep:rustls", "dep:webpki-roots", "dep:sha1", "dep:base64", "dep:ring"]
 # The web editor's HTTP (bytebin).
 net = ["dep:ureq", "dep:flate2"]
-# The declared default of a node is passed to a permission handler (horizon-rust/horizon #18755). Off until the SDK carries it.
-horizon_handler_default = []

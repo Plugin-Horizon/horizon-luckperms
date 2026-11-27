@@ -85,7 +85,7 @@ impl Ctx<'_> {
         self.msg(tr(lang::T_FIRST_TIME_NO_PERMISSIONS_SETUP, '3', &[]));
         self.msg(format!("{}.", tr(lang::T_FIRST_TIME_USE_CONSOLE_TO_GIVE_ACCESS, '3', &[])));
         self.msg(format!("{}:", tr(lang::T_FIRST_TIME_CONSOLE_COMMAND_PROMPT, '3', &[])));
-        let cmd = format!("/{label} user {username} permission set luckperms.* true");
+        let cmd = format!("{label} user {username} permission set luckperms.* true");
         let cmd = crate::horizon_luckperms_core::text::rich(&format!("\u{a7}a{cmd}"), Some(crate::horizon_luckperms_core::text::Click::SuggestCommand(cmd.clone())), Some("\u{a7}7Click to suggest the command"));
         self.msg(format!("\u{a7}3 \u{a7}3\u{a7}l>\u{a7}3 {cmd}"));
         self.out.lines.push(String::new());

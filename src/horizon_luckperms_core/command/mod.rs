@@ -2,9 +2,12 @@
 //! the same sub commands, argument checks, permission nodes, usage texts and messages (colours included).
 //! Runs on the worker thread (it may load offline users and always saves).
 
+mod access;
 mod args;
 pub(crate) mod backup;
 mod editor;
+#[cfg(feature = "wire")]
+mod editorlive;
 mod extra;
 mod fmt;
 mod holder;
@@ -12,6 +15,7 @@ mod misc;
 pub mod specs;
 mod tables;
 mod track;
+pub mod tree;
 mod usage;
 
 use crate::horizon_luckperms_core::actionlog::{Action, Part, TargetType};
@@ -28,6 +32,14 @@ use std::sync::Arc;
 
 #[allow(unused_imports)]
 pub(crate) use args::{ArgErr, Args, Check};
+pub use extra::verbose_done_lines;
+#[cfg(feature = "wire")]
+pub(crate) use editorlive::socket_frame;
+/// Without the `wire` feature there is no live editor socket and no frame to handle.
+#[cfg(not(feature = "wire"))]
+pub(crate) fn socket_frame(_rt: &Runtime, _st: &mut dyn Storage, _owner: u128, _generation: u64, _text: &str) -> Option<(CommandSender, CmdOutput)> {
+    None
+}
 pub use misc::mark_started;
 use tables::{find_main, holder_children, parent_subs, Auth, Child, MAINS};
 
@@ -37,8 +49,18 @@ pub const ROOTS: &[&str] = &["lp", "luckperms", "perm", "perms", "permission", "
 /// The label usage texts print (`/lp user <user>`).
 pub const LABEL: &str = "lp";
 
+thread_local! {
+    static TYPED: std::cell::RefCell<String> = std::cell::RefCell::new(LABEL.to_owned());
+}
+
+/// The word the sender typed for this command (`lp`, `luckperms`, `perm`...): LuckPerms prints its usage
+/// lines with it (`CommandManager.execute(sender, label, args)`).
+pub fn label() -> String {
+    TYPED.with(|l| l.borrow().clone())
+}
+
 /// The LuckPerms version this port follows, as `/lp` prints it.
-pub const LUCKPERMS_VERSION: &str = "5.5.0";
+pub const LUCKPERMS_VERSION: &str = "5.5.88";
 
 /// What a command did, for the worker to finish (log, notify, ping the other servers).
 #[derive(Debug, Default)]
@@ -415,11 +437,23 @@ pub(crate) fn child_has(has: &dyn Fn(&str) -> bool, tag: &str, ch: &Child) -> bo
 }
 
 fn usage_of(m: &tables::Main) -> String {
-    specs::spec(m.spec).usage.unwrap_or("/%s").replace("%s", LABEL)
+    specs::spec(m.spec).usage.unwrap_or("/%s").replace("%s", &label())
 }
 
 /// Runs `/lp <args>`.
 pub fn execute(rt: &Runtime, st: &mut dyn Storage, sender: &CommandSender, args: &[String]) -> CmdOutput {
+    execute_labelled(rt, st, sender, LABEL, args)
+}
+
+/// Runs `/<label> <args>`; the label only shapes the usage lines.
+pub fn execute_labelled(rt: &Runtime, st: &mut dyn Storage, sender: &CommandSender, label: &str, args: &[String]) -> CmdOutput {
+    let previous = TYPED.with(|l| l.replace(label.to_owned()));
+    let out = execute_inner(rt, st, sender, args);
+    TYPED.with(|l| *l.borrow_mut() = previous);
+    out
+}
+
+fn execute_inner(rt: &Runtime, st: &mut dyn Storage, sender: &CommandSender, args: &[String]) -> CmdOutput {
     let mut c = Ctx { rt, st, sender, cfg: rt.config(), out: CmdOutput::default() };
     let disabled = if sender.console { c.cfg.disable_luckperms_commands.console } else { c.cfg.disable_luckperms_commands.players };
     if disabled {
@@ -443,7 +477,7 @@ fn run(c: &mut Ctx<'_>, mut a: Vec<String>) {
     if a.is_empty() || (a.len() == 1 && a[0].trim().is_empty()) {
         c.banner();
         if authorized.iter().any(|ok| *ok) {
-            c.msg(format!("{}.", tr(lang::T_COMMANDSYSTEM_AVAILABLE_COMMANDS, '3', &[format!("\u{a7}a/{LABEL} help")])));
+            c.msg(format!("{}.", tr(lang::T_COMMANDSYSTEM_AVAILABLE_COMMANDS, '3', &[format!("\u{a7}a/{} help", label())])));
             return;
         }
         let (groups, empty) = {
@@ -452,7 +486,7 @@ fn run(c: &mut Ctx<'_>, mut a: Vec<String>) {
         };
         if groups <= 1 && empty {
             let name = c.sender.name.clone();
-            c.first_time_setup(LABEL, &name);
+            c.first_time_setup(&label(), &name);
         } else {
             c.no_permission_for_subcommands();
         }
@@ -479,7 +513,7 @@ fn run(c: &mut Ctx<'_>, mut a: Vec<String>) {
         return;
     }
     if main.unsupported {
-        c.msg(format!("\u{a7}c/{LABEL} {} is not available on Horizon (see the mod's README).", main.name));
+        c.msg(format!("\u{a7}c/{} {} is not available on Horizon (see the mod's README).", label(), main.name));
         return;
     }
     let args = Args::new(a);
@@ -500,6 +534,7 @@ fn run(c: &mut Ctx<'_>, mut a: Vec<String>) {
         "deletetrack" => track::delete_track(c, args),
         "listtracks" => track::list_tracks(c),
         "verbose" => extra::verbose(c, args),
+        "translations" => extra::translations(c, args),
         "tree" => extra::tree(c, args),
         "bulkupdate" => extra::bulkupdate(c, args),
         "import" => backup::import(c, args),
@@ -531,7 +566,7 @@ fn capitalised(name: &str) -> String {
 
 /// A parent's usage (`ParentCommand.sendUsage`): the header and the sub commands the sender may use.
 pub(crate) fn tracks_log_usage(c: &mut Ctx<'_>, name: &str, children: &[Child], prefix: &str) {
-    let usage = specs::spec(&name.to_lowercase()).usage.unwrap_or("").replace("%s", LABEL);
+    let usage = specs::spec(&name.to_lowercase()).usage.unwrap_or("").replace("%s", &label());
     let subs: Vec<(&str, &str)> = children.iter().filter(|ch| c.has(&format!("{prefix}.{}", ch.node))).map(|ch| (ch.name, ch.spec)).collect();
     c.parent_usage(name, &usage, &subs);
 }
@@ -550,6 +585,32 @@ fn contains(cands: Vec<String>, partial: &str) -> Vec<String> {
 
 fn booleans(partial: &str) -> Vec<String> {
     starts(vec!["true".into(), "false".into()], partial)
+}
+
+/// `TabCompletions.permissions`: the permission tree one segment at a time.
+fn permission_completions(rt: &Runtime, partial: &str) -> Vec<String> {
+    let start = partial.to_lowercase();
+    let known = crate::horizon_luckperms_core::known::all(&rt.config());
+    let mut parts: Vec<&str> = start.split('.').collect();
+    let incomplete = parts.pop().unwrap_or("");
+    let depth = parts.len();
+    let mut out: Vec<String> = Vec::new();
+    for node in &known {
+        let segs: Vec<&str> = node.split('.').collect();
+        if segs.len() <= depth || segs[..depth] != parts[..] {
+            continue;
+        }
+        let next = segs[depth];
+        if !next.to_lowercase().starts_with(incomplete) {
+            continue;
+        }
+        let word = if depth == 0 { next.to_owned() } else { format!("{}.{next}", parts.join(".")) };
+        if !out.contains(&word) {
+            out.push(word);
+        }
+    }
+    out.sort();
+    out
 }
 
 /// `TabCompletions.contexts`
@@ -647,7 +708,7 @@ pub fn complete(rt: &Runtime, sender: &CommandSender, args: &[String]) -> Vec<St
                 let Some(sub) = subs.iter().find(|s| s.name.eq_ignore_ascii_case(&r2[0]) && has(&format!("{}.{}", main.name, s.node))) else {
                     return Vec::new();
                 };
-                return sub_completions(ch.name, sub.name, i - 1, &partial, &groups, &tracks, &ctxs);
+                return sub_completions(rt, ch.name, sub.name, i - 1, &partial, &groups, &tracks, &ctxs);
             }
             match (ch.name, i) {
                 ("promote" | "demote", 0) => starts(tracks, &partial),
@@ -709,6 +770,13 @@ pub fn complete(rt: &Runtime, sender: &CommandSender, args: &[String]) -> Vec<St
             1 => starts(["delete", "update"].iter().map(|x| x.to_string()).collect(), &partial),
             _ => Vec::new(),
         },
+        "search" => {
+            if rl == 0 {
+                permission_completions(rt, &partial)
+            } else {
+                Vec::new()
+            }
+        }
         "deletegroup" => match rl {
             0 => starts(groups, &partial),
             1 => starts(vec!["--update-parent-lists".into()], &partial),
@@ -727,6 +795,7 @@ pub fn complete(rt: &Runtime, sender: &CommandSender, args: &[String]) -> Vec<St
 
 /// The completion of a shared parent's sub command at argument `i` (counted after the sub command's name).
 fn sub_completions(
+    rt: &Runtime,
     parent: &str,
     sub: &str,
     i: usize,
@@ -735,24 +804,30 @@ fn sub_completions(
     tracks: &[String],
     ctxs: &dyn Fn() -> Vec<String>,
 ) -> Vec<String> {
+    let perms = || permission_completions(rt, partial);
     let g = || starts(groups.to_vec(), partial);
     let t = || starts(tracks.to_vec(), partial);
     match (parent, sub) {
+        ("permission", "check") => match i {
+            0 => perms(),
+            _ => ctxs(),
+        },
         ("permission", "set") => match i {
-            0 => Vec::new(),
+            0 => perms(),
             1 => booleans(partial),
             _ => ctxs(),
         },
         ("permission", "unset" | "unsettemp") => {
             if i == 0 {
-                Vec::new()
+                perms()
             } else {
                 ctxs()
             }
         }
         ("permission", "settemp") => match i {
             1 => booleans(partial),
-            0 | 2 => Vec::new(),
+            0 => perms(),
+            2 => Vec::new(),
             _ => ctxs(),
         },
         ("permission", "clear") => ctxs(),
